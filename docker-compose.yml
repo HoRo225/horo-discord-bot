@@ -1,0 +1,37 @@
+services:
+  bot-prod:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - litellm
+
+  bot-dev:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    profiles: ["dev"]
+    depends_on:
+      - litellm
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    env_file: .env
+    ports:
+      - "4000:4000"
+    depends_on:
+      - litellm-postgres
+
+  litellm-postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm
+    volumes:
+      - litellm-postgres:/var/lib/postgresql/data
+
+volumes:
+  litellm-postgres:
