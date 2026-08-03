@@ -22,3 +22,7 @@ data/backups/
 
 # pytest-cov 平行執行的中繼檔
 .coverage.*
+
+# 內部文件，只留本機、不進公開 repo
+README.md
+discord-bot-crystalline-swan.md
