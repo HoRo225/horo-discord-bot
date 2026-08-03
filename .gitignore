@@ -1,0 +1,24 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+data/*.db
+data/*.db-*
+data/backups/
+*.log
+.idea/
+.vscode/
+
+# 其他 .env 變體（公開 repo 的主要洩漏管道），但保留範本
+.env.*
+!.env.example
+
+# Claude Code 本機設定
+.claude/settings.local.json
+
+# pytest-cov 平行執行的中繼檔
+.coverage.*

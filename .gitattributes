@@ -1,0 +1,6 @@
+# 工作目錄與 repo 一律 LF，避免 Windows 開發 / Ubuntu 部署之間的換行差異
+* text=auto eol=lf
+
+# 二進位檔不做換行轉換（即使誤加入也不會被破壞）
+*.db binary
+*.png binary
