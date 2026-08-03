@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+data/*.db
+data/*.db-*
+data/backups
+tests
+discord-bot-crystalline-swan.md
+
