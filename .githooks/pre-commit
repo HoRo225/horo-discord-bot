@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+# 擋掉敏感檔與資料庫檔（.env.example 除外）
+blocked=$(printf '%s\n' "$staged" \
+  | grep -E '(^|/)\.env($|\.)|\.db$|\.db-' \
+  | grep -v '\.env\.example$' || true)
+if [ -n "$blocked" ]; then
+  echo "pre-commit: 拒絕提交下列檔案（敏感或屬於執行期資料）："
+  printf '  %s\n' $blocked
+  exit 1
+fi
+
+# ruff 不在 PATH（未啟動 venv）就跳過，不要卡住 commit
+command -v ruff >/dev/null 2>&1 || exit 0
+
+py=$(printf '%s\n' "$staged" | grep '\.py$' || true)
+if [ -n "$py" ]; then
+  printf '%s\n' $py | xargs ruff check
+  printf '%s\n' $py | xargs ruff format --check
+fi
