@@ -38,13 +38,8 @@ if TYPE_CHECKING:
 
 
 def _model_name(bot: HoRoBot, settings: GuildSettings) -> str:
-    """伺服器沒指定就退回全域預設，順序與 cogs.ai_chat 實際送出請求時一致。
-
-    用 getattr 而非直接取屬性，是因為面板測試會餵不帶 settings 的假 bot。
-    """
-    return (
-        settings.ai_model or getattr(getattr(bot, "settings", None), "ai_default_model", "") or ""
-    )
+    """伺服器沒指定就退回全域預設，順序與 cogs.ai_chat 實際送出請求時一致。"""
+    return settings.ai_model or bot.settings.ai_default_model or ""
 
 
 def module_statuses(bot: HoRoBot, settings: GuildSettings) -> dict[str, StatusKind]:

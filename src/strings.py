@@ -1,6 +1,6 @@
 """所有面向使用者的繁體中文文字集中於此。"""
 
-BOT_NAME = "HoRo"
+# 通用訊息
 GENERIC_ERROR = "操作失敗，請稍後再試。錯誤追蹤碼：`{correlation_id}`"
 GUILD_ONLY = "此功能只能在伺服器內使用。"
 ADMIN_ONLY = "你需要「管理伺服器」權限才能使用此功能。"
@@ -21,6 +21,7 @@ STATUS_BADGE_OFF = "⬜"
 STATUS_BADGE_WARN = "⚠️"
 STATUS_BADGE_ERROR = "❌"
 
+# 儀表板與設定面板文字
 DASHBOARD_TITLE = "# ❄️ HoRo 儀表板"
 DASHBOARD_BODY = "選擇下方功能；所有操作都會以私人訊息面板回覆。"
 DASHBOARD_UPDATED = "儀表板已部署或更新。"
@@ -63,6 +64,7 @@ AI_MODEL = "AI 模型（可留空使用全域預設）"
 AI_GUILD_QUOTA = "伺服器每日 AI 配額"
 AI_USER_QUOTA = "每位使用者每日 AI 配額"
 
+# 經濟／抽獎商店／投票／21 點功能文字
 ECONOMY_TITLE = "# 💎 經濟中心"
 DAILY = "每日簽到"
 LEADERBOARD = "排行榜"
@@ -85,14 +87,12 @@ DAILY_ALREADY = "今天已經簽到過了，請在台北時間午夜後再來。
 BALANCE_TEXT = "你目前有 **{balance} {currency}**。"
 TRANSFER_DONE = "已轉帳 **{amount} {currency}** 給 <@{user_id}>。"
 INSUFFICIENT_BALANCE = "餘額不足。"
-SELF_TRANSFER = "不能轉帳給自己。"
 AMOUNT_POSITIVE = "金額必須是大於 0 的整數。"
 
 GIVEAWAY_TITLE = "# 🎁 抽獎商店"
 GIVEAWAY_CREATE = "建立抽獎"
 GIVEAWAY_BUY = "購買抽獎券"
 GIVEAWAY_LIST = "查看付費抽獎"
-GIVEAWAY_JOIN = "免費參加"
 GIVEAWAY_JOIN_OR_BUY = "參加／購買 1 券"
 GIVEAWAY_REROLL = "重抽"
 GIVEAWAY_PRIZE = "獎品"
@@ -143,14 +143,10 @@ POLL_LINK = " [前往投票]({link})"
 
 BLACKJACK_TITLE = "# 🃏 美式六副牌 21 點"
 BLACKJACK_RULES = "H17・Blackjack 3:2・保險 2:1・Late Surrender・DAS・最多四手"
-BLACKJACK_BET = "開始下注"
 BLACKJACK_CUSTOM_BET = "自訂下注"
 BLACKJACK_STATS = "我的戰績"
-BLACKJACK_ACTIVE = "你已有一局進行中的牌局。"
 BLACKJACK_NO_GAME = "找不到進行中的牌局。"
-BLACKJACK_INVALID_BET = "下注須介於 {minimum} 與 {maximum} 之間。"
 BLACKJACK_EVEN_BET = "為精確結算 3:2 與半注，21 點下注必須是偶數。"
-BLACKJACK_ACTION_INVALID = "目前不能執行這個動作。"
 BLACKJACK_REFUNDED = "原牌局訊息不存在，已退回 **{amount}**。"
 BLACKJACK_HIT = "要牌"
 BLACKJACK_STAND = "停牌"
@@ -180,6 +176,7 @@ BLACKJACK_RESULT_PUSH = "和"
 BLACKJACK_RESULT_NATURAL = "Blackjack"
 BLACKJACK_RESULT_SURRENDER = "投降"
 
+# AI 聊天與日誌事件文字
 AI_DISABLED = "此伺服器尚未完整設定 AI 聊天。"
 AI_FORBIDDEN = "你不在 AI 允許的頻道或身分組內。"
 AI_QUOTA = "今天的 AI 使用配額已用完。"
@@ -200,6 +197,7 @@ EVENT_MESSAGE_EDITED = "✏️ {author} 在 {channel} 編輯訊息：\n**原文�
 EVENT_CONTENT_UNCACHED = "（內容不在快取中）"
 EVENT_NO_TEXT = "（無文字）"
 
+# 設定摘要文字（面板首頁卡片用）
 SETTING_NOT_CONFIGURED = "未設定"
 SETTINGS_EDIT = "編輯"
 SETTINGS_LOG_SUMMARY = "**{title}**\n日誌：{log}"

@@ -18,10 +18,6 @@ class NotFoundError(DomainError):
     pass
 
 
-class PermissionDeniedError(DomainError):
-    pass
-
-
 class InsufficientFundsError(DomainError):
     pass
 

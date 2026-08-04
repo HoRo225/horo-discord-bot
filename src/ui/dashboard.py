@@ -6,7 +6,11 @@ import discord
 
 from src import strings
 from src.ui.base import button, open_panel, section
+from src.ui.blackjack import BlackjackPanel
 from src.ui.common import handle_interaction_error, send_ephemeral
+from src.ui.economy import economy_panel
+from src.ui.giveaway import GiveawayPanel
+from src.ui.poll import poll_panel
 
 if TYPE_CHECKING:
     from src.bot import HoRoBot
@@ -79,32 +83,24 @@ class DashboardView(discord.ui.LayoutView):
 
     async def open_economy(self, interaction: discord.Interaction) -> None:
         try:
-            from src.ui.economy import economy_panel
-
             await open_panel(interaction, await economy_panel(self.bot, interaction))
         except Exception as exc:
             await handle_interaction_error(interaction, exc)
 
     async def open_game(self, interaction: discord.Interaction) -> None:
         try:
-            from src.ui.blackjack import BlackjackPanel
-
             await open_panel(interaction, BlackjackPanel(self.bot))
         except Exception as exc:
             await handle_interaction_error(interaction, exc)
 
     async def open_giveaway(self, interaction: discord.Interaction) -> None:
         try:
-            from src.ui.giveaway import GiveawayPanel
-
             await open_panel(interaction, GiveawayPanel(self.bot))
         except Exception as exc:
             await handle_interaction_error(interaction, exc)
 
     async def open_poll(self, interaction: discord.Interaction) -> None:
         try:
-            from src.ui.poll import poll_panel
-
             await open_panel(interaction, await poll_panel(self.bot, interaction))
         except Exception as exc:
             await handle_interaction_error(interaction, exc)

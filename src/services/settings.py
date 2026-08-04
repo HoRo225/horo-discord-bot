@@ -15,16 +15,22 @@ from src.services.common import ValidationError
 class SettingsService:
     db: Database
 
-    async def get(self, guild_id: int) -> GuildSettings:
-        async def operation(session: AsyncSession) -> GuildSettings:
-            settings = await session.get(GuildSettings, guild_id)
-            if settings is None:
-                settings = GuildSettings(guild_id=guild_id)
-                session.add(settings)
-                await session.flush()
-            return settings
+    async def get_in_session(self, session: AsyncSession, guild_id: int) -> GuildSettings:
+        """在既有交易中取得（或建立）guild 設定，供其他 service 共用同一個 session。
 
-        return await self.db.run_transaction(operation)
+        flush 不可省：GuildSettings() 剛建立時，Python 端的欄位 default（例如
+        blackjack_min_bet）要 flush 之後才會實際寫入屬性，否則呼叫端拿到的會是
+        None，後續數值比較（如 minimum <= bet）就會炸掉。
+        """
+        settings = await session.get(GuildSettings, guild_id)
+        if settings is None:
+            settings = GuildSettings(guild_id=guild_id)
+            session.add(settings)
+            await session.flush()
+        return settings
+
+    async def get(self, guild_id: int) -> GuildSettings:
+        return await self.db.run_transaction(lambda session: self.get_in_session(session, guild_id))
 
     async def update(
         self,

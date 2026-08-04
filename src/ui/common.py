@@ -11,7 +11,6 @@ from src.services.common import (
     DomainError,
     InsufficientFundsError,
     NotFoundError,
-    PermissionDeniedError,
     ValidationError,
 )
 
@@ -44,8 +43,6 @@ def error_notice(interaction: discord.Interaction, error: BaseException) -> str:
         return strings.NOT_FOUND
     if isinstance(error, InsufficientFundsError):
         return strings.INSUFFICIENT_BALANCE
-    if isinstance(error, PermissionDeniedError):
-        return strings.ADMIN_ONLY
     if isinstance(error, ValidationError):
         return strings.INVALID_INPUT.format(reason=str(error))
     if isinstance(error, (ConflictError, DomainError)):

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import strings
 from src.database.engine import Database
-from src.database.models import BlackjackGame, BlackjackStats, GuildSettings
+from src.database.models import BlackjackGame, BlackjackStats
 from src.services.blackjack.rules import (
     _current_hand,
     can_double,
@@ -27,6 +27,7 @@ from src.services.blackjack.rules import (
 )
 from src.services.common import ConflictError, NotFoundError, ValidationError
 from src.services.economy import EconomyService
+from src.services.settings import SettingsService
 
 ACTION_TIMEOUT = timedelta(seconds=120)
 
@@ -59,9 +60,10 @@ class BlackjackOperationResult:
 
 
 class BlackjackService:
-    def __init__(self, db: Database, economy: EconomyService) -> None:
+    def __init__(self, db: Database, economy: EconomyService, settings: SettingsService) -> None:
         self.db = db
         self.economy = economy
+        self.settings = settings
 
     async def _active_for_user(
         self, session: AsyncSession, guild_id: int, user_id: int
@@ -147,9 +149,11 @@ class BlackjackService:
             existing = await self._active_for_user(session, guild_id, user_id)
             if existing is not None:
                 raise ConflictError(strings.ERR_ACTIVE_GAME)
-            settings = await session.get(GuildSettings, guild_id)
-            minimum = settings.blackjack_min_bet if settings else 10
-            maximum = settings.blackjack_max_bet if settings else 10_000
+            # 下注上下限屬於 SettingsService 管轄，這裡不直接查表，改共用同一交易取得
+            # （get-or-create 保證非 None，不必再各自硬寫一份 fallback 預設值）。
+            settings = await self.settings.get_in_session(session, guild_id)
+            minimum = settings.blackjack_min_bet
+            maximum = settings.blackjack_max_bet
             if not minimum <= bet <= maximum:
                 raise ValidationError(
                     strings.ERR_BET_RANGE.format(minimum=minimum, maximum=maximum)
@@ -281,10 +285,6 @@ class BlackjackService:
             return BlackjackOperationResult(game, settled)
 
         return await self.db.run_transaction(operation)
-
-    async def get_active(self, guild_id: int, user_id: int) -> BlackjackGame | None:
-        async with self.db.session_factory() as session:
-            return await self._active_for_user(session, guild_id, user_id)
 
     async def by_message(self, message_id: int) -> BlackjackGame | None:
         async with self.db.session_factory() as session:

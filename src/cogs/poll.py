@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src import strings
+from src.cogs.common import messageable_channel
 from src.services.poll import PollAnswerSnapshot
 
 if TYPE_CHECKING:
@@ -50,14 +51,9 @@ class PollCog(commands.Cog):
     async def finish_due(self) -> None:
         for pending in await self.bot.polls.due():
             try:
-                channel = self.bot.get_channel(pending.channel_id)
-                if channel is None:
-                    try:
-                        channel = await self.bot.fetch_channel(pending.channel_id)
-                    except discord.HTTPException:
-                        channel = None
+                channel = await messageable_channel(self.bot, pending.channel_id)
                 native: discord.Poll | None = None
-                if isinstance(channel, discord.abc.Messageable) and pending.message_id:
+                if channel is not None and pending.message_id:
                     try:
                         message = await channel.fetch_message(pending.message_id)
                         native = message.poll
@@ -71,7 +67,7 @@ class PollCog(commands.Cog):
                     except discord.HTTPException:
                         native = None
                 completed = await self.bot.polls.complete(pending.id, await self._snapshots(native))
-                if isinstance(channel, discord.abc.Messageable):
+                if channel is not None:
                     await channel.send(
                         strings.POLL_ENDED.format(question=completed.question),
                         allowed_mentions=discord.AllowedMentions.none(),

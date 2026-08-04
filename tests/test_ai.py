@@ -4,14 +4,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.services.ai.base import ChatMessage
-from src.services.ai.governance import (
+from src.services.ai import (
     AIUsageService,
     ConversationMemory,
     InMemoryRateLimiter,
     QuotaExceededError,
     redact_sensitive,
 )
+from src.services.ai.base import ChatMessage
 
 
 def test_sensitive_data_is_redacted():

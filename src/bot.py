@@ -12,6 +12,7 @@ from src.config import Settings
 from src.database.engine import Database
 from src.database.migrations import upgrade_database
 from src.services.ai import (
+    AIConversationService,
     AIUsageService,
     ConversationMemory,
     InMemoryRateLimiter,
@@ -23,6 +24,7 @@ from src.services.giveaway import GiveawayService
 from src.services.poll import PollService
 from src.services.settings import SettingsService
 from src.ui.blackjack import BlackjackGameView
+from src.ui.common import send_ephemeral
 from src.ui.dashboard import DashboardView
 from src.ui.giveaway import GiveawayMessageView
 
@@ -57,19 +59,26 @@ class HoRoBot(commands.AutoShardedBot):
         self.economy = EconomyService(self.database)
         self.giveaways = GiveawayService(self.database, self.economy)
         self.polls = PollService(self.database)
-        self.blackjack = BlackjackService(self.database, self.economy)
-        self.ai_usage = AIUsageService(self.database)
+        self.blackjack = BlackjackService(self.database, self.economy, self.settings_service)
+        # provider 單獨留在 bot 上：設定面板要列模型、關機要收 HTTP 連線。
         self.ai_provider = OpenAICompatibleProvider(
             base_url=settings.ai_base_url,
             api_key=settings.ai_api_key,
             timeout=settings.ai_request_timeout,
             max_retries=settings.ai_max_retries,
         )
-        self.ai_memory = ConversationMemory(
-            max_messages=settings.ai_max_context_messages,
-            max_characters=settings.ai_max_context_chars,
+        self.ai_conversation = AIConversationService(
+            provider=self.ai_provider,
+            quota=AIUsageService(self.database),
+            memory=ConversationMemory(
+                max_messages=settings.ai_max_context_messages,
+                max_characters=settings.ai_max_context_chars,
+            ),
+            rate_limiter=InMemoryRateLimiter(settings.ai_rate_limit_seconds),
+            default_model=settings.ai_default_model,
+            max_response_chars=settings.ai_max_response_chars,
+            known_secrets=(settings.ai_api_key,),
         )
-        self.ai_rate_limiter = InMemoryRateLimiter(settings.ai_rate_limit_seconds)
 
     async def setup_hook(self) -> None:
         await upgrade_database(self.settings.database_url)
@@ -97,8 +106,6 @@ class HoRoBot(commands.AutoShardedBot):
     async def on_app_command_error(
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
-        from src.ui.common import send_ephemeral
-
         if isinstance(error, app_commands.MissingPermissions):
             await send_ephemeral(interaction, strings.ADMIN_ONLY)
             return

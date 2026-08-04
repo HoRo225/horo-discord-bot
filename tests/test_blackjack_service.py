@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 
 from src.services.blackjack import BlackjackService
 from src.services.common import ValidationError
+from src.services.settings import SettingsService
 
 
 def shoe_for(*draws: str) -> list[str]:
     return ["2C"] * 20 + list(reversed(draws))
 
 
-async def test_start_settlement_and_refund_paths(db, economy):
-    service = BlackjackService(db, economy)
+@pytest_asyncio.fixture
+async def service(db, economy):
+    # BlackjackService 需要 SettingsService 才能取得下注上下限（不再繞過直接查表），
+    # 各測試共用同一套建構方式，避免每個案例各自組一次。
+    return BlackjackService(db, economy, SettingsService(db))
+
+
+async def test_start_settlement_and_refund_paths(db, economy, service):
     await economy.apply(
         guild_id=1,
         user_id=10,
@@ -44,8 +52,7 @@ async def test_start_settlement_and_refund_paths(db, economy):
     assert await economy.balance(1, 10) == 115
 
 
-async def test_timeout_auto_stands_and_settles(db, economy):
-    service = BlackjackService(db, economy)
+async def test_timeout_auto_stands_and_settles(db, economy, service):
     await economy.apply(
         guild_id=1,
         user_id=10,
@@ -67,8 +74,7 @@ async def test_timeout_auto_stands_and_settles(db, economy):
     assert await economy.balance(1, 10) == 110
 
 
-async def test_odd_bet_is_rejected_to_keep_three_to_two_exact(db, economy):
-    service = BlackjackService(db, economy)
+async def test_odd_bet_is_rejected_to_keep_three_to_two_exact(db, economy, service):
     await economy.apply(
         guild_id=1,
         user_id=10,
@@ -87,8 +93,7 @@ async def test_odd_bet_is_rejected_to_keep_three_to_two_exact(db, economy):
     assert await economy.balance(1, 10) == 100
 
 
-async def test_parallel_users_have_isolated_games(db, economy):
-    service = BlackjackService(db, economy)
+async def test_parallel_users_have_isolated_games(db, economy, service):
     for user_id in (10, 20):
         await economy.apply(
             guild_id=1,
@@ -114,7 +119,43 @@ async def test_parallel_users_have_isolated_games(db, economy):
         shoe=shoe_for("9S", "6D", "8H", "9D"),
     )
     assert first.game.id != second.game.id
-    assert (await service.get_active(1, 10)).id == first.game.id
-    assert (await service.get_active(1, 20)).id == second.game.id
+    # get_active() 已刪除（生產碼零呼叫），改用 recoverable() 過濾 user_id 驗證同等行為：
+    # 兩位玩家的進行中牌局彼此獨立、不會互相覆蓋。
+    recoverable = await service.recoverable()
+    assert next(g for g in recoverable if g.user_id == 10).id == first.game.id
+    assert next(g for g in recoverable if g.user_id == 20).id == second.game.id
     assert await economy.balance(1, 10) == 90
     assert await economy.balance(1, 20) == 80
+
+
+async def test_start_for_brand_new_guild_uses_default_bet_limits(db, economy, service):
+    """全新 guild（GuildSettings 列尚不存在）直接開局：
+    get_in_session() 走 get-or-create，若少了 flush，剛建立物件的
+    blackjack_min_bet/max_bet 會是 None，比較 minimum <= bet 會直接 TypeError。
+    這裡驗證預設下限 10、上限 10_000（與 models.py 的欄位 default 一致）確實生效。
+    """
+    guild_id = 999  # 從未被任何 SettingsService 呼叫碰過的全新 guild
+    await economy.apply(
+        guild_id=guild_id,
+        user_id=10,
+        amount=100,
+        transaction_type="admin",
+        idempotency_key="seed",
+    )
+    with pytest.raises(ValidationError, match="介於 10 與 10000"):
+        await service.start(
+            guild_id=guild_id,
+            user_id=10,
+            channel_id=20,
+            bet=8,
+            idempotency_key="below-default-min",
+        )
+    started = await service.start(
+        guild_id=guild_id,
+        user_id=10,
+        channel_id=20,
+        bet=10,
+        idempotency_key="at-default-min",
+        shoe=shoe_for("10S", "6H", "7D", "9C"),
+    )
+    assert started.game.phase == "playing"

@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src import strings
+from src.cogs.common import messageable_channel
 from src.ui.giveaway import GiveawayMessageView
 
 if TYPE_CHECKING:
@@ -30,13 +31,8 @@ class GiveawayCog(commands.Cog):
         for pending in await self.bot.giveaways.due():
             try:
                 giveaway = await self.bot.giveaways.finalize(pending.id)
-                channel = self.bot.get_channel(giveaway.channel_id)
+                channel = await messageable_channel(self.bot, giveaway.channel_id)
                 if channel is None:
-                    try:
-                        channel = await self.bot.fetch_channel(giveaway.channel_id)
-                    except discord.HTTPException:
-                        channel = None
-                if not isinstance(channel, discord.abc.Messageable):
                     continue
                 if giveaway.message_id:
                     try:

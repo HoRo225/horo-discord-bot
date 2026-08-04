@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src import strings
+from src.cogs.common import messageable_channel
 from src.services.common import aware_utc
 from src.ui.blackjack import BlackjackGameView
 
@@ -27,21 +28,12 @@ class BlackjackCog(commands.Cog):
     async def cog_unload(self) -> None:
         self.recover_and_timeout.cancel()
 
-    async def _channel(self, channel_id: int):
-        channel = self.bot.get_channel(channel_id)
-        if channel is None:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-            except discord.HTTPException:
-                return None
-        return channel if isinstance(channel, discord.abc.Messageable) else None
-
     @tasks.loop(seconds=30)
     async def recover_and_timeout(self) -> None:
         now = datetime.now(UTC)
         for game in await self.bot.blackjack.recoverable():
             try:
-                channel = await self._channel(game.channel_id)
+                channel = await messageable_channel(self.bot, game.channel_id)
                 message: discord.Message | None = None
                 if channel is not None and game.message_id is not None:
                     try:

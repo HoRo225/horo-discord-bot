@@ -1,11 +1,8 @@
 from types import SimpleNamespace
 
 from src import strings
-from src.cogs.ai_chat import (
-    ai_access_allowed,
-    split_discord_message,
-    truncate_ai_response,
-)
+from src.cogs.ai_chat import ai_access_allowed, split_discord_message
+from src.services.ai.conversation import truncate_ai_response
 
 
 def test_long_ai_response_is_split_within_discord_limit():
