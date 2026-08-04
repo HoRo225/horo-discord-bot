@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 
 import discord
 
@@ -36,22 +35,21 @@ async def defer_ephemeral(interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
 
 
-async def handle_interaction_error(interaction: discord.Interaction, error: BaseException) -> None:
+def error_notice(interaction: discord.Interaction, error: BaseException) -> str:
+    """把例外翻成使用者看得懂的訊息，必要時記錄並產生追蹤碼。
+
+    只負責產生文字，不負責送出；呼叫端決定要畫進面板還是另送訊息。
+    """
     if isinstance(error, NotFoundError):
-        await send_ephemeral(interaction, strings.NOT_FOUND)
-        return
+        return strings.NOT_FOUND
     if isinstance(error, InsufficientFundsError):
-        await send_ephemeral(interaction, strings.INSUFFICIENT_BALANCE)
-        return
+        return strings.INSUFFICIENT_BALANCE
     if isinstance(error, PermissionDeniedError):
-        await send_ephemeral(interaction, strings.ADMIN_ONLY)
-        return
+        return strings.ADMIN_ONLY
     if isinstance(error, ValidationError):
-        await send_ephemeral(interaction, strings.INVALID_INPUT.format(reason=str(error)))
-        return
+        return strings.INVALID_INPUT.format(reason=str(error))
     if isinstance(error, (ConflictError, DomainError)):
-        await send_ephemeral(interaction, str(error))
-        return
+        return str(error)
     correlation_id = uuid.uuid4().hex[:12]
     log.exception(
         "互動處理失敗",
@@ -63,7 +61,12 @@ async def handle_interaction_error(interaction: discord.Interaction, error: Base
             "interaction_id": interaction.id,
         },
     )
-    await send_ephemeral(interaction, strings.GENERIC_ERROR.format(correlation_id=correlation_id))
+    return strings.GENERIC_ERROR.format(correlation_id=correlation_id)
+
+
+async def handle_interaction_error(interaction: discord.Interaction, error: BaseException) -> None:
+    """以獨立訊息回報錯誤。用於沒有面板可回寫的情境（例如公開訊息上的按鈕）。"""
+    await send_ephemeral(interaction, error_notice(interaction, error))
 
 
 def is_admin(interaction: discord.Interaction) -> bool:
@@ -71,38 +74,5 @@ def is_admin(interaction: discord.Interaction) -> bool:
     return bool(permissions and permissions.manage_guild)
 
 
-async def require_admin(interaction: discord.Interaction) -> bool:
-    if interaction.guild_id is None:
-        await send_ephemeral(interaction, strings.GUILD_ONLY)
-        return False
-    if not is_admin(interaction):
-        await send_ephemeral(interaction, strings.ADMIN_ONLY)
-        return False
-    return True
-
-
-def parse_user_id(value: str) -> int:
-    cleaned = value.strip().strip("<@!>")
-    if not cleaned.isdigit() or int(cleaned) <= 0:
-        raise ValueError(strings.USER_ID_INVALID)
-    return int(cleaned)
-
-
-async def ensure_guild_member(interaction: discord.Interaction, user_id: int) -> discord.Member:
-    if interaction.guild is None:
-        raise ValueError(strings.GUILD_ONLY)
-    member = interaction.guild.get_member(user_id)
-    if member is not None:
-        return member
-    try:
-        return await interaction.guild.fetch_member(user_id)
-    except discord.NotFound as exc:
-        raise ValueError(strings.MEMBER_NOT_FOUND) from exc
-
-
 def message_link(guild_id: int, channel_id: int, message_id: int) -> str:
     return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
-
-
-def bot_from_interaction(interaction: discord.Interaction) -> Any:
-    return interaction.client

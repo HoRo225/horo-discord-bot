@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands, tasks
 
 from src import strings
-from src.ui.giveaway import giveaway_embed
+from src.ui.giveaway import GiveawayMessageView
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,14 @@ class GiveawayCog(commands.Cog):
                 if giveaway.message_id:
                     try:
                         message = await channel.fetch_message(giveaway.message_id)
-                        await message.edit(embed=giveaway_embed(giveaway), view=None)
+                        # 公告內容也在 view 裡，不能傳 view=None，否則整則公告會變空白；
+                        # GiveawayMessageView 在非 active 狀態會自行收起參加按鈕。
+                        await message.edit(
+                            content=None,
+                            embeds=[],
+                            attachments=[],
+                            view=GiveawayMessageView(self.bot, giveaway),
+                        )
                     except discord.HTTPException:
                         pass
                 if giveaway.winners:

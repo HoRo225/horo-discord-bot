@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -9,13 +10,8 @@ import discord
 from src import strings
 from src.database.models import Giveaway
 from src.services.common import aware_utc
-from src.ui.common import (
-    defer_ephemeral,
-    handle_interaction_error,
-    is_admin,
-    message_link,
-    send_ephemeral,
-)
+from src.ui.base import PagedPanel, Panel, button, defer_update, show_error, swap_panel
+from src.ui.common import handle_interaction_error, is_admin, message_link
 
 
 def parse_duration(value: str) -> timedelta:
@@ -33,7 +29,8 @@ def parse_duration(value: str) -> timedelta:
     }[unit]
 
 
-def giveaway_embed(giveaway: Giveaway) -> discord.Embed:
+def giveaway_text(giveaway: Giveaway) -> str:
+    """把抽獎資訊組成一段可放進 TextDisplay 的文字。"""
     status = (
         strings.GIVEAWAY_STATUS_ACTIVE
         if giveaway.status == "active"
@@ -44,105 +41,203 @@ def giveaway_embed(giveaway: Giveaway) -> discord.Embed:
         if giveaway.ticket_price == 0
         else strings.GIVEAWAY_PRICE.format(price=giveaway.ticket_price)
     )
-    ending = discord.utils.format_dt(aware_utc(giveaway.ends_at), style="R")
-    embed = discord.Embed(
-        title=f"🎁 {giveaway.prize}",
-        description=strings.GIVEAWAY_DESCRIPTION.format(
-            id=giveaway.id,
-            winner_count=giveaway.winner_count,
-            price=price,
-            limit=giveaway.per_user_limit,
-            ending=ending,
-        ),
-        colour=discord.Colour.gold(),
+    body = strings.GIVEAWAY_DESCRIPTION.format(
+        id=giveaway.id,
+        winner_count=giveaway.winner_count,
+        price=price,
+        limit=giveaway.per_user_limit,
+        ending=discord.utils.format_dt(aware_utc(giveaway.ends_at), style="R"),
     )
-    embed.set_footer(text=status)
-    return embed
+    return f"## 🎁 {giveaway.prize}\n{body}\n-# {status}"
 
 
-class GiveawayPanel(discord.ui.LayoutView):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(timeout=300)
-        self.bot = bot
-        create = discord.ui.Button(
-            label=strings.GIVEAWAY_CREATE,
-            style=discord.ButtonStyle.primary,
-            custom_id="cs:giveaway:create",
+def _options(giveaways: Sequence[Giveaway]) -> list[discord.SelectOption]:
+    return [
+        discord.SelectOption(
+            label=strings.GIVEAWAY_OPTION.format(id=item.id, prize=item.prize)[:100],
+            value=str(item.id),
         )
-        listing = discord.ui.Button(label=strings.GIVEAWAY_LIST, custom_id="cs:giveaway:list")
-        buy = discord.ui.Button(label=strings.GIVEAWAY_BUY, custom_id="cs:giveaway:buy")
-        reroll = discord.ui.Button(label=strings.GIVEAWAY_REROLL, custom_id="cs:giveaway:reroll")
-        create.callback = self.create
-        listing.callback = self.listing
-        buy.callback = self.buy
-        reroll.callback = self.reroll
-        self.add_item(
-            discord.ui.Container(
-                discord.ui.TextDisplay(strings.GIVEAWAY_TITLE),
-                discord.ui.ActionRow(create, listing, buy, reroll),
-                accent_colour=discord.Colour.gold(),
+        for item in giveaways[:25]
+    ]
+
+
+class GiveawayMessageView(discord.ui.LayoutView):
+    """頻道內的抽獎公告訊息。
+
+    公告內容與參加按鈕都在這個 view 裡，所以**結束時不能傳 view=None**，
+    那會讓整則公告變空白。改由本類別在非 active 狀態自行收起參加按鈕。
+    """
+
+    def __init__(self, bot: Any, giveaway: Giveaway | None = None) -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+        items: list[discord.ui.Item[Any]] = []
+        if giveaway is not None:
+            items.append(discord.ui.TextDisplay(giveaway_text(giveaway)))
+        if giveaway is None or giveaway.status == "active":
+            items.append(discord.ui.Separator())
+            items.append(
+                discord.ui.ActionRow(
+                    button(
+                        strings.GIVEAWAY_JOIN_OR_BUY,
+                        "cs:giveaway:enter",
+                        self.enter,
+                        style=discord.ButtonStyle.success,
+                        emoji="🎟️",
+                    )
+                )
             )
+        self.add_item(discord.ui.Container(*items, accent_colour=discord.Colour.gold()))
+
+    async def enter(self, interaction: discord.Interaction) -> None:
+        try:
+            await defer_update(interaction)
+            if interaction.message is None:
+                raise RuntimeError(strings.ACTIVITY_MESSAGE_NOT_FOUND)
+            giveaway = await self.bot.giveaways.by_message(interaction.message.id)
+            if giveaway is None:
+                await interaction.followup.send(strings.NOT_FOUND, ephemeral=True)
+                return
+            result = await self.bot.giveaways.enter(
+                giveaway_id=giveaway.id,
+                guild_id=interaction.guild_id,
+                user_id=interaction.user.id,
+                quantity=1,
+                idempotency_key=str(interaction.id),
+            )
+            # 公開公告是共享訊息，參加結果只回報給本人。
+            await interaction.followup.send(
+                strings.GIVEAWAY_ENTERED.format(weight=result.weight), ephemeral=True
+            )
+        except Exception as exc:
+            await handle_interaction_error(interaction, exc)
+
+
+async def giveaway_panel(
+    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+) -> GiveawayPanel:
+    return GiveawayPanel(bot, notice=notice)
+
+
+class GiveawayPanel(Panel):
+    title = strings.GIVEAWAY_TITLE
+    accent = discord.Colour.gold()
+
+    def rows(self) -> Iterable[discord.ui.Item[Any]]:
+        yield discord.ui.Separator()
+        yield discord.ui.ActionRow(
+            button(
+                strings.GIVEAWAY_CREATE,
+                "cs:giveaway:create",
+                self.create,
+                style=discord.ButtonStyle.primary,
+                emoji="✨",
+            ),
+            button(strings.GIVEAWAY_LIST, "cs:giveaway:list", self.listing, emoji="📋"),
+            button(strings.GIVEAWAY_BUY, "cs:giveaway:buy", self.buy, emoji="🎟️"),
+            button(strings.GIVEAWAY_REROLL, "cs:giveaway:reroll", self.reroll, emoji="🔁"),
+        )
+
+    async def _deny(self, interaction: discord.Interaction) -> None:
+        await defer_update(interaction)
+        await swap_panel(
+            interaction, await giveaway_panel(self.bot, interaction, notice=strings.ADMIN_ONLY)
         )
 
     async def create(self, interaction: discord.Interaction) -> None:
         if not is_admin(interaction):
-            await send_ephemeral(interaction, strings.ADMIN_ONLY)
+            await self._deny(interaction)
             return
         await interaction.response.send_modal(CreateGiveawayModal(self.bot))
 
     async def listing(self, interaction: discord.Interaction) -> None:
         try:
-            await defer_ephemeral(interaction)
-            giveaways = await self.bot.giveaways.active(interaction.guild_id, paid_only=True)
-            lines = []
-            for item in giveaways:
-                ending = discord.utils.format_dt(aware_utc(item.ends_at), style="R")
-                lines.append(f"`#{item.id}` **{item.prize}** — {ending}")
-            await send_ephemeral(
-                interaction,
-                strings.GIVEAWAY_PAID_HEADER
-                + "\n"
-                + ("\n".join(lines) if lines else strings.GIVEAWAY_PAID_EMPTY),
-            )
+            await defer_update(interaction)
+            await swap_panel(interaction, await giveaway_list_panel(self.bot, interaction))
         except Exception as exc:
-            await handle_interaction_error(interaction, exc)
+            await show_error(
+                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+            )
 
     async def buy(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(BuyTicketsModal(self.bot))
+        giveaways = await self.bot.giveaways.active(interaction.guild_id)
+        if not giveaways:
+            await defer_update(interaction)
+            await swap_panel(
+                interaction,
+                await giveaway_panel(self.bot, interaction, notice=strings.GIVEAWAY_NONE_ACTIVE),
+            )
+            return
+        await interaction.response.send_modal(BuyTicketsModal(self.bot, giveaways))
 
     async def reroll(self, interaction: discord.Interaction) -> None:
         if not is_admin(interaction):
-            await send_ephemeral(interaction, strings.ADMIN_ONLY)
+            await self._deny(interaction)
             return
-        await interaction.response.send_modal(RerollModal(self.bot))
+        giveaways = await self.bot.giveaways.active(interaction.guild_id)
+        await interaction.response.send_modal(RerollModal(self.bot, giveaways))
+
+
+async def giveaway_list_panel(
+    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+) -> GiveawayListPanel:
+    giveaways = await bot.giveaways.active(interaction.guild_id, paid_only=True)
+
+    async def back(target: discord.Interaction) -> None:
+        await defer_update(target)
+        await swap_panel(target, await giveaway_panel(bot, target))
+
+    return GiveawayListPanel(bot, giveaways, notice=notice, back=back)
+
+
+class GiveawayListPanel(PagedPanel):
+    title = strings.GIVEAWAY_PAID_HEADER
+    accent = discord.Colour.gold()
+    page_size = 10
+
+    def page_rows(self, items: list[Any]) -> Iterable[discord.ui.Item[Any]]:
+        if not self.items:
+            yield discord.ui.TextDisplay(strings.GIVEAWAY_PAID_EMPTY)
+            return
+        yield discord.ui.TextDisplay(
+            "\n".join(
+                f"`#{item.id}` **{item.prize}** — "
+                f"{discord.utils.format_dt(aware_utc(item.ends_at), style='R')}"
+                for item in items
+            )
+        )
 
 
 class CreateGiveawayModal(discord.ui.Modal):
     def __init__(self, bot: Any) -> None:
-        super().__init__(title=strings.GIVEAWAY_CREATE, custom_id="cs:giveaway:create:modal")
+        super().__init__(
+            title=strings.GIVEAWAY_CREATE, timeout=300, custom_id="cs:giveaway:create:modal"
+        )
         self.bot = bot
-        self.prize = discord.ui.TextInput(label=strings.GIVEAWAY_PRIZE, max_length=300)
-        self.winners = discord.ui.TextInput(
-            label=strings.GIVEAWAY_WINNER_COUNT, default="1", max_length=2
-        )
-        self.duration = discord.ui.TextInput(
-            label=strings.GIVEAWAY_DURATION, placeholder="2h", max_length=12
-        )
-        self.price = discord.ui.TextInput(
-            label=strings.GIVEAWAY_TICKET_PRICE, default="0", max_length=18
-        )
-        self.limit = discord.ui.TextInput(
-            label=strings.GIVEAWAY_PER_USER_LIMIT, default="1", max_length=6
-        )
-        for item in (self.prize, self.winners, self.duration, self.price, self.limit):
-            self.add_item(item)
+        self.prize = discord.ui.TextInput(max_length=300)
+        self.winners = discord.ui.TextInput(default="1", max_length=2)
+        self.duration = discord.ui.TextInput(placeholder="2h", max_length=12)
+        self.price = discord.ui.TextInput(default="0", max_length=18)
+        self.limit = discord.ui.TextInput(default="1", max_length=6)
+        for text, component in (
+            (strings.GIVEAWAY_PRIZE, self.prize),
+            (strings.GIVEAWAY_WINNER_COUNT, self.winners),
+            (strings.GIVEAWAY_DURATION, self.duration),
+            (strings.GIVEAWAY_TICKET_PRICE, self.price),
+            (strings.GIVEAWAY_PER_USER_LIMIT, self.limit),
+        ):
+            self.add_item(discord.ui.Label(text=text, component=component))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if not is_admin(interaction):
-            await send_ephemeral(interaction, strings.ADMIN_ONLY)
-            return
         try:
-            await defer_ephemeral(interaction)
+            await defer_update(interaction)
+            # Modal 的 interaction 不會經過開啟它的面板檢查，這道防線必須留著。
+            if not is_admin(interaction):
+                await swap_panel(
+                    interaction,
+                    await giveaway_panel(self.bot, interaction, notice=strings.ADMIN_ONLY),
+                )
+                return
             duration = parse_duration(str(self.duration))
             giveaway = await self.bot.giveaways.create(
                 guild_id=interaction.guild_id,
@@ -157,66 +252,101 @@ class CreateGiveawayModal(discord.ui.Modal):
             if interaction.channel is None:
                 raise RuntimeError(strings.CURRENT_CHANNEL_NOT_FOUND)
             message = await interaction.channel.send(
-                embed=giveaway_embed(giveaway),
-                view=GiveawayEntryView(self.bot),
+                view=GiveawayMessageView(self.bot, giveaway),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             await self.bot.giveaways.attach_message(giveaway.id, message.id)
             link = message_link(interaction.guild_id, message.channel.id, message.id)
-            await send_ephemeral(
+            await swap_panel(
                 interaction,
-                strings.GIVEAWAY_CREATED.format(giveaway_id=giveaway.id)
-                + strings.GIVEAWAY_LINK.format(link=link),
+                await giveaway_panel(
+                    self.bot,
+                    interaction,
+                    notice=strings.GIVEAWAY_CREATED.format(giveaway_id=giveaway.id)
+                    + strings.GIVEAWAY_LINK.format(link=link),
+                ),
             )
         except ValueError as exc:
-            await send_ephemeral(interaction, strings.INVALID_INPUT.format(reason=str(exc)))
+            await swap_panel(
+                interaction,
+                await giveaway_panel(
+                    self.bot,
+                    interaction,
+                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
+                ),
+            )
         except Exception as exc:
-            await handle_interaction_error(interaction, exc)
+            await show_error(
+                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+            )
 
 
 class BuyTicketsModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(title=strings.GIVEAWAY_BUY, custom_id="cs:giveaway:buy:modal")
+    def __init__(self, bot: Any, giveaways: Sequence[Giveaway]) -> None:
+        super().__init__(title=strings.GIVEAWAY_BUY, timeout=300, custom_id="cs:giveaway:buy:modal")
         self.bot = bot
-        self.giveaway_id = discord.ui.TextInput(label=strings.GIVEAWAY_ID, max_length=12)
-        self.quantity = discord.ui.TextInput(
-            label=strings.GIVEAWAY_QUANTITY, default="1", max_length=6
+        self.target = discord.ui.Select(
+            placeholder=strings.GIVEAWAY_PICK_PLACEHOLDER, options=_options(giveaways)
         )
-        self.add_item(self.giveaway_id)
-        self.add_item(self.quantity)
+        self.quantity = discord.ui.TextInput(default="1", max_length=6)
+        self.add_item(discord.ui.Label(text=strings.GIVEAWAY_ID, component=self.target))
+        self.add_item(discord.ui.Label(text=strings.GIVEAWAY_QUANTITY, component=self.quantity))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            await defer_ephemeral(interaction)
+            await defer_update(interaction)
             result = await self.bot.giveaways.enter(
-                giveaway_id=int(str(self.giveaway_id)),
+                giveaway_id=int(self.target.values[0]),
                 guild_id=interaction.guild_id,
                 user_id=interaction.user.id,
                 quantity=int(str(self.quantity)),
                 idempotency_key=str(interaction.id),
             )
-            await send_ephemeral(interaction, strings.GIVEAWAY_ENTERED.format(weight=result.weight))
+            await swap_panel(
+                interaction,
+                await giveaway_panel(
+                    self.bot,
+                    interaction,
+                    notice=strings.GIVEAWAY_ENTERED.format(weight=result.weight),
+                ),
+            )
         except ValueError as exc:
-            await send_ephemeral(interaction, strings.INVALID_INPUT.format(reason=str(exc)))
+            await swap_panel(
+                interaction,
+                await giveaway_panel(
+                    self.bot,
+                    interaction,
+                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
+                ),
+            )
         except Exception as exc:
-            await handle_interaction_error(interaction, exc)
+            await show_error(
+                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+            )
 
 
 class RerollModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(title=strings.GIVEAWAY_REROLL, custom_id="cs:giveaway:reroll:modal")
+    def __init__(self, bot: Any, giveaways: Sequence[Giveaway]) -> None:
+        super().__init__(
+            title=strings.GIVEAWAY_REROLL, timeout=300, custom_id="cs:giveaway:reroll:modal"
+        )
         self.bot = bot
-        self.giveaway_id = discord.ui.TextInput(label=strings.GIVEAWAY_ID, max_length=12)
-        self.add_item(self.giveaway_id)
+        self.target = discord.ui.Select(
+            placeholder=strings.GIVEAWAY_PICK_PLACEHOLDER, options=_options(giveaways)
+        )
+        self.add_item(discord.ui.Label(text=strings.GIVEAWAY_ID, component=self.target))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        if not is_admin(interaction):
-            await send_ephemeral(interaction, strings.ADMIN_ONLY)
-            return
         try:
-            await defer_ephemeral(interaction)
+            await defer_update(interaction)
+            if not is_admin(interaction):
+                await swap_panel(
+                    interaction,
+                    await giveaway_panel(self.bot, interaction, notice=strings.ADMIN_ONLY),
+                )
+                return
             giveaway = await self.bot.giveaways.reroll(
-                int(str(self.giveaway_id)), admin_user_id=interaction.user.id
+                int(self.target.values[0]), admin_user_id=interaction.user.id
             )
             winners = "、".join(f"<@{user_id}>" for user_id in giveaway.winners)
             winners = winners or strings.GIVEAWAY_NO_REROLL_CANDIDATE
@@ -225,42 +355,20 @@ class RerollModal(discord.ui.Modal):
                     strings.GIVEAWAY_REROLL_RESULT.format(id=giveaway.id, winners=winners),
                     allowed_mentions=discord.AllowedMentions(users=True),
                 )
-            await send_ephemeral(interaction, strings.SUCCESS)
-        except ValueError as exc:
-            await send_ephemeral(interaction, strings.INVALID_INPUT.format(reason=str(exc)))
-        except Exception as exc:
-            await handle_interaction_error(interaction, exc)
-
-
-class GiveawayEntryView(discord.ui.View):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(timeout=None)
-        self.bot = bot
-        button = discord.ui.Button(
-            label=strings.GIVEAWAY_JOIN_OR_BUY,
-            emoji="🎟️",
-            style=discord.ButtonStyle.success,
-            custom_id="cs:giveaway:enter",
-        )
-        button.callback = self.enter
-        self.add_item(button)
-
-    async def enter(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_ephemeral(interaction)
-            if interaction.message is None:
-                raise RuntimeError(strings.ACTIVITY_MESSAGE_NOT_FOUND)
-            giveaway = await self.bot.giveaways.by_message(interaction.message.id)
-            if giveaway is None:
-                await send_ephemeral(interaction, strings.NOT_FOUND)
-                return
-            result = await self.bot.giveaways.enter(
-                giveaway_id=giveaway.id,
-                guild_id=interaction.guild_id,
-                user_id=interaction.user.id,
-                quantity=1,
-                idempotency_key=str(interaction.id),
+            await swap_panel(
+                interaction,
+                await giveaway_panel(self.bot, interaction, notice=strings.SUCCESS),
             )
-            await send_ephemeral(interaction, strings.GIVEAWAY_ENTERED.format(weight=result.weight))
+        except ValueError as exc:
+            await swap_panel(
+                interaction,
+                await giveaway_panel(
+                    self.bot,
+                    interaction,
+                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
+                ),
+            )
         except Exception as exc:
-            await handle_interaction_error(interaction, exc)
+            await show_error(
+                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+            )

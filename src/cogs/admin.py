@@ -5,9 +5,10 @@ from discord import app_commands
 from discord.ext import commands
 
 from src import strings
+from src.ui.base import open_panel
 from src.ui.common import defer_ephemeral, handle_interaction_error, is_admin, send_ephemeral
 from src.ui.dashboard import DashboardView
-from src.ui.settings import SettingsPanel
+from src.ui.settings import settings_panel
 
 
 class AdminCog(commands.Cog):
@@ -37,12 +38,14 @@ class AdminCog(commands.Cog):
                         content=None,
                         embeds=[],
                         attachments=[],
-                        view=DashboardView(self.bot),
+                        view=DashboardView(self.bot, interaction.guild),
                     )
                 except discord.NotFound:
                     message = None
             if message is None:
-                message = await interaction.channel.send(view=DashboardView(self.bot))
+                message = await interaction.channel.send(
+                    view=DashboardView(self.bot, interaction.guild)
+                )
             await self.bot.settings_service.update(
                 interaction.guild_id,
                 interaction.user.id,
@@ -64,8 +67,7 @@ class AdminCog(commands.Cog):
             await send_ephemeral(interaction, strings.ADMIN_ONLY)
             return
         try:
-            settings = await self.bot.settings_service.get(interaction.guild_id)
-            await send_ephemeral(interaction, view=SettingsPanel(self.bot, settings))
+            await open_panel(interaction, await settings_panel(self.bot, interaction))
         except Exception as exc:
             await handle_interaction_error(interaction, exc)
 

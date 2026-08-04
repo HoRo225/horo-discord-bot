@@ -8,7 +8,7 @@ from discord.ext import commands, tasks
 
 from src import strings
 from src.services.common import aware_utc
-from src.ui.blackjack import BlackjackActionView, game_embed
+from src.ui.blackjack import BlackjackGameView
 
 log = logging.getLogger(__name__)
 
@@ -53,13 +53,19 @@ class BlackjackCog(commands.Cog):
                             allowed_mentions=discord.AllowedMentions(users=True),
                         )
                     continue
+                # 牌面與按鈕都在 view 裡，逾時結算時也不能傳 view=None，
+                # 否則整張牌桌會消失；BlackjackGameView 自己會在終局收起操作按鈕。
                 if aware_utc(game.expires_at) <= now:
                     result = await self.bot.blackjack.timeout(game.id)
-                    await message.edit(embed=game_embed(result.game), view=None)
+                    target = result.game
                 else:
-                    await message.edit(
-                        embed=game_embed(game), view=BlackjackActionView(self.bot, game)
-                    )
+                    target = game
+                await message.edit(
+                    content=None,
+                    embeds=[],
+                    attachments=[],
+                    view=BlackjackGameView(self.bot, target),
+                )
             except Exception:
                 log.exception(
                     "21 點牌局恢復或逾時處理失敗",

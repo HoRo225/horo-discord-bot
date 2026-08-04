@@ -22,9 +22,9 @@ from src.services.economy import EconomyService
 from src.services.giveaway import GiveawayService
 from src.services.poll import PollService
 from src.services.settings import SettingsService
-from src.ui.blackjack import BlackjackActionView
+from src.ui.blackjack import BlackjackGameView
 from src.ui.dashboard import DashboardView
-from src.ui.giveaway import GiveawayEntryView
+from src.ui.giveaway import GiveawayMessageView
 
 log = logging.getLogger(__name__)
 
@@ -76,8 +76,8 @@ class HoRoBot(commands.AutoShardedBot):
     async def setup_hook(self) -> None:
         await upgrade_database(self.settings.database_url)
         self.add_view(DashboardView(self))
-        self.add_view(GiveawayEntryView(self))
-        self.add_view(BlackjackActionView(self))
+        self.add_view(GiveawayMessageView(self))
+        self.add_view(BlackjackGameView(self))
         for extension in COG_EXTENSIONS:
             await self.load_extension(extension)
 

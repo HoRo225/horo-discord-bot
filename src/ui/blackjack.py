@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import discord
@@ -15,48 +16,47 @@ from src.services.blackjack import (
     hand_value,
     state_from_game,
 )
-from src.ui.common import (
-    defer_ephemeral,
-    handle_interaction_error,
-    message_link,
-    send_ephemeral,
-)
+from src.ui.base import Panel, button, defer_update, show_error, swap_panel
+from src.ui.common import handle_interaction_error, message_link
+
+TERMINAL_PHASES = frozenset({"settled", "refunded"})
+
+RESULT_NAMES = {
+    "win": strings.BLACKJACK_RESULT_WIN,
+    "loss": strings.BLACKJACK_RESULT_LOSS,
+    "push": strings.BLACKJACK_RESULT_PUSH,
+    "blackjack": strings.BLACKJACK_RESULT_NATURAL,
+    "surrender": strings.BLACKJACK_RESULT_SURRENDER,
+}
 
 
-def game_embed(game: BlackjackGame) -> discord.Embed:
-    terminal = game.phase in {"settled", "refunded"}
+def game_text(game: BlackjackGame) -> str:
+    """把牌局狀態組成一段可放進 TextDisplay 的文字。"""
+    terminal = game.phase in TERMINAL_PHASES
     dealer_cards = display_cards(game.dealer_cards, hide_second=not terminal)
     if terminal:
-        dealer_value = hand_value(game.dealer_cards)[0]
-        dealer_line = f"{dealer_cards}（{dealer_value}）"
+        dealer_line = f"{dealer_cards}（{hand_value(game.dealer_cards)[0]}）"
     else:
         dealer_line = dealer_cards
     lines = [strings.BLACKJACK_DEALER_LINE.format(cards=dealer_line)]
+
     result_hands = game.outcome.get("hands", []) if game.outcome else []
-    result_names = {
-        "win": strings.BLACKJACK_RESULT_WIN,
-        "loss": strings.BLACKJACK_RESULT_LOSS,
-        "push": strings.BLACKJACK_RESULT_PUSH,
-        "blackjack": strings.BLACKJACK_RESULT_NATURAL,
-        "surrender": strings.BLACKJACK_RESULT_SURRENDER,
-    }
     for index, hand in enumerate(game.hands):
-        value = hand_value(hand["cards"])[0]
-        marker = "👉 " if index == game.active_hand and not terminal else ""
         result = ""
         if index < len(result_hands):
-            result_key = result_hands[index]["result"]
-            result = f"｜**{result_names.get(result_key, result_key)}**"
+            key = result_hands[index]["result"]
+            result = f"｜**{RESULT_NAMES.get(key, key)}**"
         lines.append(
             strings.BLACKJACK_HAND_LINE.format(
-                marker=marker,
+                marker="👉 " if index == game.active_hand and not terminal else "",
                 number=index + 1,
                 cards=display_cards(hand["cards"]),
-                value=value,
+                value=hand_value(hand["cards"])[0],
                 bet=hand["bet"],
                 result=result,
             )
         )
+
     if game.phase == "insurance":
         lines.append(strings.BLACKJACK_INSURANCE_OFFER)
     if game.phase == "refunded":
@@ -69,227 +69,143 @@ def game_embed(game: BlackjackGame) -> discord.Embed:
                 net=game.outcome.get("net", 0),
             )
         )
-    embed = discord.Embed(
-        title=strings.BLACKJACK_EMBED_TITLE,
-        description="\n".join(lines),
-        colour=discord.Colour.dark_teal() if not terminal else discord.Colour.green(),
-    )
-    embed.set_footer(
-        text=strings.BLACKJACK_FOOTER.format(user_id=game.user_id, game_id=game.id[:8])
-    )
-    return embed
+    # 原本 Embed 的 footer，在 V2 改用 Discord 的 subtext 語法呈現。
+    lines.append("-# " + strings.BLACKJACK_FOOTER.format(user_id=game.user_id, game_id=game.id[:8]))
+    return "\n".join(lines)
 
 
-class BlackjackPanel(discord.ui.LayoutView):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(timeout=300)
-        self.bot = bot
-        buttons: list[discord.ui.Button] = []
-        for amount in (10, 100, 1_000):
-            button = discord.ui.Button(
-                label=strings.BLACKJACK_QUICK_BET.format(amount=amount),
-                style=discord.ButtonStyle.primary,
-                custom_id=f"cs:blackjack:bet:{amount}",
-            )
-            button.callback = self._quick_callback(amount)
-            buttons.append(button)
-        custom = discord.ui.Button(
-            label=strings.BLACKJACK_CUSTOM_BET, custom_id="cs:blackjack:custom"
-        )
-        stats = discord.ui.Button(label=strings.BLACKJACK_STATS, custom_id="cs:blackjack:stats")
-        custom.callback = self.custom
-        stats.callback = self.stats
-        self.add_item(
-            discord.ui.Container(
-                discord.ui.TextDisplay(strings.BLACKJACK_TITLE),
-                discord.ui.TextDisplay(strings.BLACKJACK_RULES),
-                discord.ui.ActionRow(*buttons),
-                discord.ui.ActionRow(custom, stats),
-                accent_colour=discord.Colour.dark_teal(),
-            )
-        )
+class BlackjackGameView(discord.ui.LayoutView):
+    """頻道內的牌桌訊息。
 
-    def _quick_callback(self, amount: int):
-        async def callback(interaction: discord.Interaction) -> None:
-            await start_game(self.bot, interaction, amount)
+    牌面與操作按鈕都在這個 view 裡，所以**結算後不能傳 view=None**，
+    那會讓整張牌桌畫面消失。改由本類別自行決定終局時不放操作按鈕。
+    """
 
-        return callback
-
-    async def custom(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(CustomBetModal(self.bot))
-
-    async def stats(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_ephemeral(interaction)
-            stats = await self.bot.blackjack.stats(interaction.guild_id, interaction.user.id)
-            if stats is None:
-                text = strings.BLACKJACK_NO_STATS
-            else:
-                text = strings.BLACKJACK_STATS_TEXT.format(
-                    wins=stats.wins,
-                    losses=stats.losses,
-                    pushes=stats.pushes,
-                    blackjacks=stats.blackjacks,
-                    wagered=stats.total_wagered,
-                    won=stats.total_won,
-                )
-            await send_ephemeral(interaction, text)
-        except Exception as exc:
-            await handle_interaction_error(interaction, exc)
-
-
-class CustomBetModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(title=strings.BLACKJACK_CUSTOM_BET, custom_id="cs:blackjack:bet:modal")
-        self.bot = bot
-        self.amount = discord.ui.TextInput(
-            label=strings.BLACKJACK_BET_AMOUNT, placeholder="100", max_length=18
-        )
-        self.add_item(self.amount)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            amount = int(str(self.amount).strip())
-        except ValueError as exc:
-            await send_ephemeral(interaction, strings.INVALID_INPUT.format(reason=str(exc)))
-            return
-        await start_game(self.bot, interaction, amount)
-
-
-async def start_game(bot: Any, interaction: discord.Interaction, amount: int) -> None:
-    try:
-        await defer_ephemeral(interaction)
-        result = await bot.blackjack.start(
-            guild_id=interaction.guild_id,
-            user_id=interaction.user.id,
-            channel_id=interaction.channel_id,
-            bet=amount,
-            idempotency_key=str(interaction.id),
-        )
-        if interaction.channel is None:
-            raise RuntimeError(strings.CURRENT_CHANNEL_NOT_FOUND)
-        view = None if result.game.phase == "settled" else BlackjackActionView(bot, result.game)
-        try:
-            message = await interaction.channel.send(
-                embed=game_embed(result.game),
-                view=view,
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
-            await bot.blackjack.attach_message(result.game.id, message.id)
-        except Exception:
-            await bot.blackjack.refund_missing_message(result.game.id)
-            raise
-        link = message_link(interaction.guild_id, message.channel.id, message.id)
-        await send_ephemeral(interaction, strings.BLACKJACK_GAME_CREATED.format(link=link))
-    except Exception as exc:
-        await handle_interaction_error(interaction, exc)
-
-
-class BlackjackActionView(discord.ui.View):
     def __init__(self, bot: Any, game: BlackjackGame | None = None) -> None:
         super().__init__(timeout=None)
         self.bot = bot
+        items: list[discord.ui.Item[Any]] = [discord.ui.TextDisplay(strings.BLACKJACK_EMBED_TITLE)]
+        if game is not None:
+            items.append(discord.ui.TextDisplay(game_text(game)))
+        terminal = game is not None and game.phase in TERMINAL_PHASES
+        if not terminal:
+            items.append(discord.ui.Separator())
+            items.extend(self._action_rows(game))
+        self.add_item(
+            discord.ui.Container(
+                *items,
+                accent_colour=(discord.Colour.green() if terminal else discord.Colour.dark_teal()),
+            )
+        )
+
+    def _action_rows(self, game: BlackjackGame | None) -> Iterable[discord.ui.ActionRow]:
         state = state_from_game(game) if game is not None else None
         phase = game.phase if game is not None else "unknown"
-        definitions = [
-            (strings.BLACKJACK_HIT, "cs:blackjack:hit", discord.ButtonStyle.primary, self.hit),
-            (
+
+        def blocked(kind: str) -> bool:
+            if game is None:
+                return False
+            if kind in {"insurance", "no_insurance"}:
+                return phase != "insurance"
+            if phase != "playing":
+                return True
+            if kind == "double":
+                return not can_double(state)
+            if kind == "split":
+                return not can_split(state)
+            if kind == "surrender":
+                return not can_surrender(state)
+            return False
+
+        yield discord.ui.ActionRow(
+            button(
+                strings.BLACKJACK_HIT,
+                "cs:blackjack:hit",
+                self.hit,
+                style=discord.ButtonStyle.primary,
+                disabled=blocked("hit"),
+            ),
+            button(
                 strings.BLACKJACK_STAND,
                 "cs:blackjack:stand",
-                discord.ButtonStyle.secondary,
                 self.stand,
+                disabled=blocked("stand"),
             ),
-            (
+            button(
                 strings.BLACKJACK_DOUBLE,
                 "cs:blackjack:double",
-                discord.ButtonStyle.success,
                 self.double,
+                style=discord.ButtonStyle.success,
+                disabled=blocked("double"),
             ),
-            (
+            button(
                 strings.BLACKJACK_SPLIT,
                 "cs:blackjack:split",
-                discord.ButtonStyle.success,
                 self.split,
+                style=discord.ButtonStyle.success,
+                disabled=blocked("split"),
             ),
-            (
+            button(
                 strings.BLACKJACK_SURRENDER,
                 "cs:blackjack:surrender",
-                discord.ButtonStyle.danger,
                 self.surrender,
+                style=discord.ButtonStyle.danger,
+                disabled=blocked("surrender"),
             ),
-            (
+        )
+        yield discord.ui.ActionRow(
+            button(
                 strings.BLACKJACK_INSURANCE,
                 "cs:blackjack:insurance",
-                discord.ButtonStyle.success,
                 self.insurance,
+                style=discord.ButtonStyle.success,
+                disabled=blocked("insurance"),
             ),
-            (
+            button(
                 strings.BLACKJACK_NO_INSURANCE,
                 "cs:blackjack:no_insurance",
-                discord.ButtonStyle.secondary,
                 self.no_insurance,
+                disabled=blocked("no_insurance"),
             ),
-        ]
-        for label, custom_id, style, callback in definitions:
-            disabled = False
-            if game is not None:
-                if (
-                    custom_id.endswith("insurance")
-                    and not custom_id.endswith("no_insurance")
-                    or custom_id.endswith("no_insurance")
-                ):
-                    disabled = phase != "insurance"
-                elif phase != "playing":
-                    disabled = True
-                elif custom_id.endswith("double"):
-                    disabled = not can_double(state)
-                elif custom_id.endswith("split"):
-                    disabled = not can_split(state)
-                elif custom_id.endswith("surrender"):
-                    disabled = not can_surrender(state)
-            button = discord.ui.Button(
-                label=label, style=style, custom_id=custom_id, disabled=disabled
-            )
-            button.callback = callback
-            self.add_item(button)
+        )
 
     async def _game(self, interaction: discord.Interaction) -> BlackjackGame | None:
         if interaction.message is None:
             return None
         return await self.bot.blackjack.by_message(interaction.message.id)
 
+    async def _apply(self, interaction: discord.Interaction, result: BlackjackOperationResult):
+        await interaction.message.edit(
+            content=None,
+            embeds=[],
+            attachments=[],
+            view=BlackjackGameView(self.bot, result.game),
+        )
+
     async def _act(self, interaction: discord.Interaction, action: str) -> None:
         try:
-            await defer_ephemeral(interaction)
+            await defer_update(interaction)
             game = await self._game(interaction)
             if game is None:
-                await send_ephemeral(interaction, strings.BLACKJACK_NO_GAME)
+                await interaction.followup.send(strings.BLACKJACK_NO_GAME, ephemeral=True)
                 return
-            result: BlackjackOperationResult = await self.bot.blackjack.action(
+            result = await self.bot.blackjack.action(
                 game_id=game.id,
                 guild_id=interaction.guild_id,
                 user_id=interaction.user.id,
                 action=action,
                 idempotency_key=str(interaction.id),
             )
-            await interaction.message.edit(
-                embed=game_embed(result.game),
-                view=(
-                    None
-                    if result.game.phase == "settled"
-                    else BlackjackActionView(self.bot, result.game)
-                ),
-            )
-            await send_ephemeral(interaction, strings.BLACKJACK_ACTION_DONE)
+            await self._apply(interaction, result)
         except Exception as exc:
             await handle_interaction_error(interaction, exc)
 
     async def _insurance(self, interaction: discord.Interaction, take: bool) -> None:
         try:
-            await defer_ephemeral(interaction)
+            await defer_update(interaction)
             game = await self._game(interaction)
             if game is None:
-                await send_ephemeral(interaction, strings.BLACKJACK_NO_GAME)
+                await interaction.followup.send(strings.BLACKJACK_NO_GAME, ephemeral=True)
                 return
             result = await self.bot.blackjack.insurance(
                 game_id=game.id,
@@ -298,15 +214,7 @@ class BlackjackActionView(discord.ui.View):
                 take=take,
                 idempotency_key=str(interaction.id),
             )
-            await interaction.message.edit(
-                embed=game_embed(result.game),
-                view=(
-                    None
-                    if result.game.phase == "settled"
-                    else BlackjackActionView(self.bot, result.game)
-                ),
-            )
-            await send_ephemeral(interaction, strings.BLACKJACK_ACTION_DONE)
+            await self._apply(interaction, result)
         except Exception as exc:
             await handle_interaction_error(interaction, exc)
 
@@ -330,3 +238,126 @@ class BlackjackActionView(discord.ui.View):
 
     async def no_insurance(self, interaction: discord.Interaction) -> None:
         await self._insurance(interaction, False)
+
+
+async def blackjack_panel(
+    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+) -> BlackjackPanel:
+    return BlackjackPanel(bot, notice=notice)
+
+
+class BlackjackPanel(Panel):
+    title = strings.BLACKJACK_TITLE
+    body = strings.BLACKJACK_RULES
+    accent = discord.Colour.dark_teal()
+
+    def rows(self) -> Iterable[discord.ui.Item[Any]]:
+        yield discord.ui.Separator()
+        yield discord.ui.ActionRow(
+            *(
+                button(
+                    strings.BLACKJACK_QUICK_BET.format(amount=amount),
+                    f"cs:blackjack:bet:{amount}",
+                    self._quick(amount),
+                    style=discord.ButtonStyle.primary,
+                )
+                for amount in (10, 100, 1_000)
+            )
+        )
+        yield discord.ui.ActionRow(
+            button(strings.BLACKJACK_CUSTOM_BET, "cs:blackjack:custom", self.custom),
+            button(strings.BLACKJACK_STATS, "cs:blackjack:stats", self.stats, emoji="📈"),
+        )
+
+    def _quick(self, amount: int):
+        async def callback(interaction: discord.Interaction) -> None:
+            await start_game(self.bot, interaction, amount)
+
+        return callback
+
+    async def custom(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(CustomBetModal(self.bot))
+
+    async def stats(self, interaction: discord.Interaction) -> None:
+        try:
+            await defer_update(interaction)
+            stats = await self.bot.blackjack.stats(interaction.guild_id, interaction.user.id)
+            notice = (
+                strings.BLACKJACK_NO_STATS
+                if stats is None
+                else strings.BLACKJACK_STATS_TEXT.format(
+                    wins=stats.wins,
+                    losses=stats.losses,
+                    pushes=stats.pushes,
+                    blackjacks=stats.blackjacks,
+                    wagered=stats.total_wagered,
+                    won=stats.total_won,
+                )
+            )
+            await swap_panel(
+                interaction, await blackjack_panel(self.bot, interaction, notice=notice)
+            )
+        except Exception as exc:
+            await show_error(
+                interaction, exc, lambda note: blackjack_panel(self.bot, interaction, notice=note)
+            )
+
+
+class CustomBetModal(discord.ui.Modal):
+    def __init__(self, bot: Any) -> None:
+        super().__init__(
+            title=strings.BLACKJACK_CUSTOM_BET, timeout=300, custom_id="cs:blackjack:bet:modal"
+        )
+        self.bot = bot
+        self.amount = discord.ui.TextInput(placeholder="100", max_length=18)
+        self.add_item(discord.ui.Label(text=strings.BLACKJACK_BET_AMOUNT, component=self.amount))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            amount = int(str(self.amount).strip())
+        except ValueError as exc:
+            await defer_update(interaction)
+            await swap_panel(
+                interaction,
+                await blackjack_panel(
+                    self.bot,
+                    interaction,
+                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
+                ),
+            )
+            return
+        await start_game(self.bot, interaction, amount)
+
+
+async def start_game(bot: Any, interaction: discord.Interaction, amount: int) -> None:
+    try:
+        await defer_update(interaction)
+        result = await bot.blackjack.start(
+            guild_id=interaction.guild_id,
+            user_id=interaction.user.id,
+            channel_id=interaction.channel_id,
+            bet=amount,
+            idempotency_key=str(interaction.id),
+        )
+        if interaction.channel is None:
+            raise RuntimeError(strings.CURRENT_CHANNEL_NOT_FOUND)
+        try:
+            message = await interaction.channel.send(
+                view=BlackjackGameView(bot, result.game),
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            await bot.blackjack.attach_message(result.game.id, message.id)
+        except Exception:
+            await bot.blackjack.refund_missing_message(result.game.id)
+            raise
+        link = message_link(interaction.guild_id, message.channel.id, message.id)
+        await swap_panel(
+            interaction,
+            await blackjack_panel(
+                bot, interaction, notice=strings.BLACKJACK_GAME_CREATED.format(link=link)
+            ),
+        )
+    except Exception as exc:
+        await show_error(
+            interaction, exc, lambda note: blackjack_panel(bot, interaction, notice=note)
+        )

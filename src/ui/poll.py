@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Any
 
@@ -7,13 +8,15 @@ import discord
 
 from src import strings
 from src.services.common import aware_utc
-from src.ui.common import (
-    defer_ephemeral,
-    handle_interaction_error,
-    is_admin,
-    message_link,
-    send_ephemeral,
+from src.ui.base import (
+    PagedPanel,
+    Panel,
+    button,
+    defer_update,
+    show_error,
+    swap_panel,
 )
+from src.ui.common import is_admin, message_link
 
 
 def _parse_bool(value: str) -> bool:
@@ -33,51 +36,83 @@ async def can_create_poll(bot: Any, interaction: discord.Interaction) -> bool:
     return bool(role_ids.intersection(settings.poll_creator_role_ids))
 
 
-class PollPanel(discord.ui.LayoutView):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(timeout=300)
-        self.bot = bot
-        create = discord.ui.Button(
-            label=strings.POLL_CREATE,
-            style=discord.ButtonStyle.primary,
-            custom_id="cs:poll:create",
-        )
-        listing = discord.ui.Button(label=strings.POLL_LIST, custom_id="cs:poll:list")
-        create.callback = self.create
-        listing.callback = self.listing
-        self.add_item(
-            discord.ui.Container(
-                discord.ui.TextDisplay(strings.POLL_TITLE),
-                discord.ui.ActionRow(create, listing),
-                accent_colour=discord.Colour.blurple(),
-            )
+async def poll_panel(
+    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+) -> PollPanel:
+    """組出投票主面板。目前不需要查資料庫，但維持 async 工廠以配合返回鈕的呼叫慣例。"""
+    return PollPanel(bot, notice=notice)
+
+
+class PollPanel(Panel):
+    title = strings.POLL_TITLE
+    accent = discord.Colour.blurple()
+
+    def rows(self) -> Iterable[discord.ui.Item[Any]]:
+        yield discord.ui.ActionRow(
+            button(
+                strings.POLL_CREATE,
+                "cs:poll:create",
+                self.create,
+                style=discord.ButtonStyle.primary,
+            ),
+            button(strings.POLL_LIST, "cs:poll:list", self.listing),
         )
 
     async def create(self, interaction: discord.Interaction) -> None:
         try:
             if not await can_create_poll(self.bot, interaction):
-                await send_ephemeral(interaction, strings.POLL_FORBIDDEN)
+                await defer_update(interaction)
+                await swap_panel(
+                    interaction,
+                    await poll_panel(self.bot, interaction, notice=strings.POLL_FORBIDDEN),
+                )
                 return
             await interaction.response.send_modal(CreatePollModal(self.bot))
         except Exception as exc:
-            await handle_interaction_error(interaction, exc)
+            await show_error(
+                interaction, exc, lambda note: poll_panel(self.bot, interaction, notice=note)
+            )
 
     async def listing(self, interaction: discord.Interaction) -> None:
         try:
-            await defer_ephemeral(interaction)
-            polls = await self.bot.polls.active(interaction.guild_id)
-            lines = []
-            for poll in polls:
-                ending = discord.utils.format_dt(aware_utc(poll.ends_at), style="R")
-                lines.append(f"`#{poll.id}` **{poll.question}** — {ending}")
-            await send_ephemeral(
-                interaction,
-                strings.POLL_ACTIVE_HEADER
-                + "\n"
-                + ("\n".join(lines) if lines else strings.POLL_ACTIVE_EMPTY),
-            )
+            await defer_update(interaction)
+            await swap_panel(interaction, await poll_list_panel(self.bot, interaction))
         except Exception as exc:
-            await handle_interaction_error(interaction, exc)
+            await show_error(
+                interaction, exc, lambda note: poll_panel(self.bot, interaction, notice=note)
+            )
+
+
+async def poll_list_panel(
+    bot: Any,
+    interaction: discord.Interaction,
+    *,
+    page: int = 0,
+    notice: str | None = None,
+) -> PollListPanel:
+    polls = await bot.polls.active(interaction.guild_id)
+
+    async def back(target: discord.Interaction) -> None:
+        await defer_update(target)
+        await swap_panel(target, await poll_panel(bot, target))
+
+    return PollListPanel(bot, polls, page=page, notice=notice, back=back)
+
+
+class PollListPanel(PagedPanel):
+    title = strings.POLL_ACTIVE_HEADER
+    accent = discord.Colour.blurple()
+    page_size = 10
+
+    def page_rows(self, items: list[Any]) -> Iterable[discord.ui.Item[Any]]:
+        if not self.items:
+            yield discord.ui.TextDisplay(strings.POLL_ACTIVE_EMPTY)
+            return
+        lines = []
+        for poll in items:
+            ending = discord.utils.format_dt(aware_utc(poll.ends_at), style="R")
+            lines.append(f"`#{poll.id}` **{poll.question}** — {ending}")
+        yield discord.ui.TextDisplay("\n".join(lines))
 
 
 class CreatePollModal(discord.ui.Modal):
@@ -104,10 +139,13 @@ class CreatePollModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
+            await defer_update(interaction)
             if not await can_create_poll(self.bot, interaction):
-                await send_ephemeral(interaction, strings.POLL_FORBIDDEN)
+                await swap_panel(
+                    interaction,
+                    await poll_panel(self.bot, interaction, notice=strings.POLL_FORBIDDEN),
+                )
                 return
-            await defer_ephemeral(interaction)
             duration = timedelta(hours=float(str(self.duration).strip()))
             answers = [line.strip() for line in str(self.options).splitlines() if line.strip()]
             multiple = _parse_bool(str(self.multiple))
@@ -134,11 +172,18 @@ class CreatePollModal(discord.ui.Modal):
             )
             await self.bot.polls.attach_message(poll_record.id, message.id)
             link = message_link(interaction.guild_id, message.channel.id, message.id)
-            await send_ephemeral(
-                interaction,
-                strings.POLL_CREATED + strings.POLL_LINK.format(link=link),
-            )
+            notice = strings.POLL_CREATED + strings.POLL_LINK.format(link=link)
+            await swap_panel(interaction, await poll_panel(self.bot, interaction, notice=notice))
         except ValueError as exc:
-            await send_ephemeral(interaction, strings.INVALID_INPUT.format(reason=str(exc)))
+            await swap_panel(
+                interaction,
+                await poll_panel(
+                    self.bot,
+                    interaction,
+                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
+                ),
+            )
         except Exception as exc:
-            await handle_interaction_error(interaction, exc)
+            await show_error(
+                interaction, exc, lambda note: poll_panel(self.bot, interaction, notice=note)
+            )
