@@ -64,9 +64,7 @@ class Settings:
         if require_token and not token:
             raise ValueError("缺少 DISCORD_TOKEN，請先建立 .env")
 
-        database_url = os.getenv(
-            "DATABASE_URL", "sqlite+aiosqlite:///./data/horo.db"
-        ).strip()
+        database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/horo.db").strip()
         if not database_url:
             raise ValueError("DATABASE_URL 不可為空")
 
