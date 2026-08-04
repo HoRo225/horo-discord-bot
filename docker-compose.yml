@@ -29,3 +29,29 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # OpenAI 相容的 AI 閘道；bot 以服務名稱 ninerouter 走內部網路連線。
+  # 服務名稱不用 9router，避免以數字開頭的 hostname 造成解析相容性問題。
+  ninerouter:
+    image: decolua/9router:latest
+    restart: unless-stopped
+    init: true
+    environment:
+      DATA_DIR: /app/data
+      NODE_ENV: production
+    volumes:
+      - ninerouter-data:/app/data
+    # Docker 發布 port 會繞過 ufw，所以一定要指定綁定位址。
+    # 預設只綁 localhost；要讓 tailnet 連進管理介面才在 .env 填 Tailscale IP。
+    ports:
+      - "${NINEROUTER_BIND_ADDR:-127.0.0.1}:20128:20128"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  ninerouter-data:
+
