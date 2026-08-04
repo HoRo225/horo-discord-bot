@@ -65,7 +65,7 @@ class Settings:
             raise ValueError("缺少 DISCORD_TOKEN，請先建立 .env")
 
         database_url = os.getenv(
-            "DATABASE_URL", "sqlite+aiosqlite:///./data/crystalline_swan.db"
+            "DATABASE_URL", "sqlite+aiosqlite:///./data/horo.db"
         ).strip()
         if not database_url:
             raise ValueError("DATABASE_URL 不可為空")

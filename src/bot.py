@@ -40,7 +40,7 @@ COG_EXTENSIONS = (
 )
 
 
-class CrystallineSwanBot(commands.AutoShardedBot):
+class HoRoBot(commands.AutoShardedBot):
     def __init__(self, settings: Settings) -> None:
         intents = discord.Intents.default()
         intents.members = True

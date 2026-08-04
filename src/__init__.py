@@ -1,1 +1,1 @@
-"""Crystalline Swan Discord bot。"""
+"""HoRo Discord bot。"""

@@ -37,7 +37,7 @@ def restore(backup_path: Path) -> Path:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="還原 Crystalline Swan SQLite 備份")
+    parser = argparse.ArgumentParser(description="還原 HoRo SQLite 備份")
     parser.add_argument("backup", type=Path)
     parser.add_argument(
         "--confirm",

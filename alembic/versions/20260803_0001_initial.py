@@ -1,4 +1,4 @@
-"""建立 Crystalline Swan 完整初始資料表。
+"""建立 HoRo 完整初始資料表。
 
 Revision ID: 20260803_0001
 Revises:

@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: crystalline-swan:local
+    image: horo:local
     env_file:
       - .env
     restart: unless-stopped

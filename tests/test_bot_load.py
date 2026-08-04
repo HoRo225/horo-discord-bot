@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.bot import COG_EXTENSIONS, CrystallineSwanBot
+from src.bot import COG_EXTENSIONS, HoRoBot
 from src.config import Settings
 
 
@@ -20,7 +20,7 @@ async def test_all_cogs_load_and_only_documented_commands_are_registered(tmp_pat
         ai_rate_limit_seconds=5,
         log_level="INFO",
     )
-    bot = CrystallineSwanBot(settings)
+    bot = HoRoBot(settings)
     try:
         for extension in COG_EXTENSIONS:
             await bot.load_extension(extension)

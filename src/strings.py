@@ -1,6 +1,6 @@
 """所有面向使用者的繁體中文文字集中於此。"""
 
-BOT_NAME = "Crystalline Swan"
+BOT_NAME = "HoRo"
 GENERIC_ERROR = "操作失敗，請稍後再試。錯誤追蹤碼：`{correlation_id}`"
 GUILD_ONLY = "此功能只能在伺服器內使用。"
 ADMIN_ONLY = "你需要「管理伺服器」權限才能使用此功能。"
@@ -18,7 +18,7 @@ CMD_SETTINGS_DESC = "開啟伺服器設定面板"
 CMD_HELP_DESC = "顯示使用說明"
 CMD_PING_DESC = "檢查 Bot 延遲"
 
-DASHBOARD_TITLE = "# ❄️ Crystalline Swan 儀表板"
+DASHBOARD_TITLE = "# ❄️ HoRo 儀表板"
 DASHBOARD_BODY = "選擇下方功能；所有操作都會以私人訊息面板回覆。"
 DASHBOARD_UPDATED = "儀表板已部署或更新。"
 DASHBOARD_STALE = "這是舊版儀表板，請改用伺服器目前的儀表板。"
@@ -153,7 +153,7 @@ BLACKJACK_HAND_LINE = "{marker}**第 {number} 手：** {cards}（{value}）｜�
 BLACKJACK_INSURANCE_OFFER = "莊家明牌為 A：可購買原注一半的保險。"
 BLACKJACK_REFUND_LINE = "已退款：**{amount}**"
 BLACKJACK_SETTLEMENT_LINE = "\n總下注：**{staked}**｜返還：**{credit}**｜淨額：**{net:+}**"
-BLACKJACK_EMBED_TITLE = "🃏 Crystalline Swan 21 點"
+BLACKJACK_EMBED_TITLE = "🃏 HoRo 21 點"
 BLACKJACK_FOOTER = "玩家 {user_id}｜牌局 {game_id}"
 BLACKJACK_QUICK_BET = "下注 {amount}"
 BLACKJACK_NO_STATS = "尚未有牌局戰績。"
@@ -258,7 +258,7 @@ ERR_UNKNOWN_GAME_ACTION = "未知的牌局動作"
 WELCOME_DEFAULT = "歡迎 {user} 加入 {server}！你是第 {count} 位成員。"
 GOODBYE_DEFAULT = "{user} 離開了 {server}，目前共有 {count} 位成員。"
 
-HELP_TEXT = """# Crystalline Swan 使用說明
+HELP_TEXT = """# HoRo 使用說明
 `/setup`：部署或更新常駐儀表板（管理員）
 `/settings`：開啟伺服器設定（管理員）
 `/help`：顯示此說明

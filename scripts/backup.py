@@ -26,7 +26,7 @@ def backup(*, retention: int = 14) -> Path:
         raise FileNotFoundError(f"找不到資料庫：{source_path}")
     backup_dir = source_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    destination = backup_dir / f"crystalline-swan-{datetime.now(UTC):%Y%m%d-%H%M%S}.db"
+    destination = backup_dir / f"horo-{datetime.now(UTC):%Y%m%d-%H%M%S}.db"
 
     with (
         closing(sqlite3.connect(source_path)) as source,
@@ -37,7 +37,7 @@ def backup(*, retention: int = 14) -> Path:
         if not integrity or integrity[0] != "ok":
             raise RuntimeError("備份完整性檢查失敗")
 
-    backups = sorted(backup_dir.glob("crystalline-swan-*.db"), reverse=True)
+    backups = sorted(backup_dir.glob("horo-*.db"), reverse=True)
     for expired in backups[max(1, retention) :]:
         expired.unlink()
     return destination
