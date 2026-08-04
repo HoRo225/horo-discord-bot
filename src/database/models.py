@@ -13,13 +13,10 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Text,
     UniqueConstraint,
     event,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
-from src import strings
 
 
 def utcnow() -> datetime:
@@ -34,11 +31,7 @@ class GuildSettings(Base):
     __tablename__ = "guild_settings"
 
     guild_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    welcome_channel_id: Mapped[int | None] = mapped_column(BigInteger)
-    goodbye_channel_id: Mapped[int | None] = mapped_column(BigInteger)
     log_channel_id: Mapped[int | None] = mapped_column(BigInteger)
-    welcome_template: Mapped[str] = mapped_column(Text, default=strings.WELCOME_DEFAULT)
-    goodbye_template: Mapped[str] = mapped_column(Text, default=strings.GOODBYE_DEFAULT)
     log_member_events: Mapped[bool] = mapped_column(Boolean, default=True)
     log_message_events: Mapped[bool] = mapped_column(Boolean, default=True)
     dashboard_channel_id: Mapped[int | None] = mapped_column(BigInteger)

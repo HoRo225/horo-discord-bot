@@ -3,12 +3,16 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands
 
 from src import strings
 from src.services.ai import AIUpstreamError, ChatMessage, QuotaExceededError, redact_sensitive
+
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ def truncate_ai_response(content: str, max_characters: int) -> str:
 
 
 class AIChatCog(commands.Cog):
-    def __init__(self, bot) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         self.bot = bot
 
     async def _is_reply_to_bot(self, message: discord.Message) -> bool:
@@ -193,5 +197,5 @@ class AIChatCog(commands.Cog):
                     )
 
 
-async def setup(bot) -> None:
+async def setup(bot: HoRoBot) -> None:
     await bot.add_cog(AIChatCog(bot))

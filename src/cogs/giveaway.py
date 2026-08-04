@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands, tasks
@@ -8,11 +9,14 @@ from discord.ext import commands, tasks
 from src import strings
 from src.ui.giveaway import GiveawayMessageView
 
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
+
 log = logging.getLogger(__name__)
 
 
 class GiveawayCog(commands.Cog):
-    def __init__(self, bot) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         self.bot = bot
 
     async def cog_load(self) -> None:
@@ -66,5 +70,5 @@ class GiveawayCog(commands.Cog):
         await self.bot.wait_until_ready()
 
 
-async def setup(bot) -> None:
+async def setup(bot: HoRoBot) -> None:
     await bot.add_cog(GiveawayCog(bot))

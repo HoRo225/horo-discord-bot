@@ -3,24 +3,32 @@
 單一訊息模型：使用者開啟面板後，之後所有導覽、操作與結果回饋都改寫同一則訊息，
 不再每次操作都送出新的 ephemeral 訊息。
 
-本模組刻意只依賴 discord 與 strings，不 import 任何具體面板，維持單向依賴。
+本模組只往下依賴 discord、strings 與同層的 common/status，不 import 任何具體面板，
+維持單向依賴。
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Iterable, Sequence
-from typing import Any, ClassVar
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import discord
 
 from src import strings
+from src.services.common import ValidationError
 from src.ui.common import error_notice, send_ephemeral
+from src.ui.status import ACCENTS, Notice, StatusKind, badge
+
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
 
 log = logging.getLogger(__name__)
 
 PanelCallback = Callable[[discord.Interaction], Awaitable[None]]
-PanelFactory = Callable[[str], Awaitable[discord.ui.LayoutView]]
+# 收到純 str 就原樣顯示，收到 Notice 才套徽章與顏色；語意化對呼叫端是 opt-in。
+PanelFactory = Callable[[str | Notice], Awaitable[discord.ui.LayoutView]]
 
 # 可以直接被 bot 送出訊息的頻道型別。刻意不含 forum：
 # 論壇頻道沒有 send()，必須先開討論串，選了只會在執行期炸掉。
@@ -76,10 +84,40 @@ async def show_error(
     """
     notice = error_notice(interaction, error)
     try:
-        await swap_panel(interaction, await rebuild(notice))
+        await swap_panel(interaction, await rebuild(Notice(notice, StatusKind.ERROR)))
     except Exception:
         log.exception("面板錯誤回寫失敗", extra={"guild_id": interaction.guild_id})
+        # 退路只有純文字可用，徽章與顏色都是面板才有的東西。
         await send_ephemeral(interaction, notice)
+
+
+@asynccontextmanager
+async def panel_action(
+    interaction: discord.Interaction, rebuild: PanelFactory
+) -> AsyncIterator[None]:
+    """面板操作的標準外殼：先 defer 預留就地更新，失敗把錯誤畫回 rebuild 的面板。
+
+    ValueError 視為使用者輸入問題（對齊各 Modal 既有的分支），包成 ValidationError
+    走 show_error，享有同一套「重建失敗退回獨立訊息」保底。
+
+    不適用清單——以下情境請維持手寫，不要套用本外殼：
+
+    * 要開 Modal 的 callback：``send_modal`` 必須是該次互動的**首個**回應，
+      而本外殼一進來就 defer，套上去 Modal 會開不起來。那類 callback 直接
+      ``await interaction.response.send_modal(...)``，錯誤處理留給 Modal 的 on_submit。
+    * 公開訊息上的按鈕（沒有可重建的私人面板）：改用 ui.common 的
+      ``handle_interaction_error``，以獨立 ephemeral 訊息回報。
+
+    成功路徑仍由呼叫端自行 ``swap_panel``；本外殼只負責 defer 與錯誤收尾，
+    不預設「操作完一定要重繪」，因為有些操作會改跳到別的面板。
+    """
+    await defer_update(interaction)
+    try:
+        yield
+    except ValueError as exc:
+        await show_error(interaction, ValidationError(str(exc)), rebuild)
+    except Exception as exc:
+        await show_error(interaction, exc, rebuild)
 
 
 def button(
@@ -104,6 +142,11 @@ def section(text: str, accessory: discord.ui.Button | discord.ui.Thumbnail) -> d
     return discord.ui.Section(discord.ui.TextDisplay(text), accessory=accessory)
 
 
+def _notice_text(notice: str | Notice) -> str:
+    """純 str 原樣輸出，不補任何前綴：呼叫端沒要求語意化就別替它決定。"""
+    return badge(notice.kind, notice.text) if isinstance(notice, Notice) else notice
+
+
 class Panel(discord.ui.LayoutView):
     """面板骨架。
 
@@ -113,13 +156,15 @@ class Panel(discord.ui.LayoutView):
 
     title: ClassVar[str] = ""
     body: ClassVar[str | None] = None
-    accent: ClassVar[discord.Colour] = discord.Colour.blurple()
+    # 刻意不是 ClassVar：子類別仍以類別屬性宣告自己的預設色，但帶語意的 Notice
+    # 會在 __init__ 覆寫成實例屬性，讓同一個面板依當下狀態換色。
+    accent: discord.Colour = discord.Colour.blurple()
 
     def __init__(
         self,
-        bot: Any,
+        bot: HoRoBot,
         *,
-        notice: str | None = None,
+        notice: str | Notice | None = None,
         back: PanelCallback | None = None,
         timeout: float | None = 300,
     ) -> None:
@@ -127,6 +172,9 @@ class Panel(discord.ui.LayoutView):
         self.bot = bot
         self.notice = notice
         self.back = back
+        # accent 必須在建 Container 之前定案：accent_colour 是建構當下取值，事後改沒有用。
+        if isinstance(notice, Notice):
+            self.accent = ACCENTS[notice.kind]
         self.add_item(discord.ui.Container(*self._assemble(), accent_colour=self.accent))
 
     def _assemble(self) -> list[discord.ui.Item[Any]]:
@@ -134,7 +182,7 @@ class Panel(discord.ui.LayoutView):
         if self.title:
             items.append(discord.ui.TextDisplay(self.title))
         if self.notice:
-            items.append(discord.ui.TextDisplay(self.notice))
+            items.append(discord.ui.TextDisplay(_notice_text(self.notice)))
         if self.body:
             items.append(discord.ui.TextDisplay(self.body))
         items.extend(self.rows())
@@ -160,11 +208,11 @@ class PagedPanel(Panel):
 
     def __init__(
         self,
-        bot: Any,
+        bot: HoRoBot,
         items: Sequence[Any],
         *,
         page: int = 0,
-        notice: str | None = None,
+        notice: str | Notice | None = None,
         back: PanelCallback | None = None,
         timeout: float | None = 300,
     ) -> None:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import string
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,46 +9,6 @@ from src import strings
 from src.database.engine import Database
 from src.database.models import AdminAudit, GuildSettings
 from src.services.common import ValidationError
-
-ALLOWED_TEMPLATE_FIELDS = {"user", "server", "count"}
-
-
-def validate_message_template(template: str) -> str:
-    template = template.strip()
-    if not template:
-        raise ValidationError(strings.ERR_TEMPLATE_EMPTY)
-    if len(template) > 1_500:
-        raise ValidationError(strings.ERR_TEMPLATE_TOO_LONG)
-    try:
-        fields = {
-            field_name for _, field_name, _, _ in string.Formatter().parse(template) if field_name
-        }
-    except ValueError as exc:
-        raise ValidationError(strings.ERR_TEMPLATE_BRACES) from exc
-    unknown = fields - ALLOWED_TEMPLATE_FIELDS
-    if unknown:
-        raise ValidationError(
-            strings.ERR_TEMPLATE_UNKNOWN.format(fields=", ".join(sorted(unknown)))
-        )
-    return template
-
-
-def parse_snowflake_list(value: str) -> list[int]:
-    if not value.strip():
-        return []
-    items: list[int] = []
-    for raw in value.replace("，", ",").split(","):
-        cleaned = raw.strip().strip("<@#&!>")
-        if not cleaned:
-            continue
-        if not cleaned.isdigit():
-            raise ValidationError(strings.ERR_INVALID_ID.format(value=raw.strip()))
-        number = int(cleaned)
-        if number <= 0:
-            raise ValidationError(strings.ERR_ID_POSITIVE)
-        if number not in items:
-            items.append(number)
-    return items
 
 
 @dataclass(slots=True)
@@ -76,11 +35,7 @@ class SettingsService:
         values: dict[str, Any],
     ) -> GuildSettings:
         allowed = {
-            "welcome_channel_id",
-            "goodbye_channel_id",
             "log_channel_id",
-            "welcome_template",
-            "goodbye_template",
             "log_member_events",
             "log_message_events",
             "dashboard_channel_id",
@@ -101,10 +56,6 @@ class SettingsService:
             raise ValidationError(
                 strings.ERR_UNKNOWN_SETTINGS.format(fields=", ".join(sorted(unknown)))
             )
-        if "welcome_template" in values:
-            values["welcome_template"] = validate_message_template(values["welcome_template"])
-        if "goodbye_template" in values:
-            values["goodbye_template"] = validate_message_template(values["goodbye_template"])
         if "currency_name" in values:
             name = str(values["currency_name"]).strip()
             if not 1 <= len(name) <= 50:
@@ -147,15 +98,3 @@ class SettingsService:
             return settings
 
         return await self.db.run_transaction(operation)
-
-    @staticmethod
-    def render_template(template: str, *, user: str, server: str, count: int) -> str:
-        validated = validate_message_template(template)
-        return validated.format(user=user, server=server, count=count)
-
-
-def default_settings_preview() -> dict[str, str]:
-    return {
-        "welcome_template": strings.WELCOME_DEFAULT,
-        "goodbye_template": strings.GOODBYE_DEFAULT,
-    }

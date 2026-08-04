@@ -30,9 +30,7 @@ log = logging.getLogger(__name__)
 
 COG_EXTENSIONS = (
     "src.cogs.admin",
-    "src.cogs.welcome",
     "src.cogs.event_log",
-    "src.cogs.economy",
     "src.cogs.giveaway",
     "src.cogs.poll",
     "src.cogs.blackjack",

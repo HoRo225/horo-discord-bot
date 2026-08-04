@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import discord
 
@@ -11,15 +11,19 @@ from src.ui.base import (
     Panel,
     button,
     defer_update,
+    panel_action,
     section,
-    show_error,
     swap_panel,
 )
 from src.ui.common import is_admin
+from src.ui.status import Notice, StatusKind
+
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
 
 
 async def economy_panel(
-    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+    bot: HoRoBot, interaction: discord.Interaction, *, notice: str | Notice | None = None
 ) -> EconomyPanel:
     """組出帶有目前餘額的經濟面板。餘額要查資料庫，所以建構走 async 工廠。"""
     settings = await bot.settings_service.get(interaction.guild_id)
@@ -31,7 +35,9 @@ class EconomyPanel(Panel):
     title = strings.ECONOMY_TITLE
     accent = discord.Colour.from_rgb(94, 234, 212)
 
-    def __init__(self, bot: Any, *, balance: int = 0, currency: str = "", **kwargs: Any) -> None:
+    def __init__(
+        self, bot: HoRoBot, *, balance: int = 0, currency: str = "", **kwargs: Any
+    ) -> None:
         self.balance = balance
         self.currency = currency
         super().__init__(bot, **kwargs)
@@ -62,52 +68,52 @@ class EconomyPanel(Panel):
         )
 
     async def daily(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: economy_panel(self.bot, interaction, notice=note)
+        ):
             settings = await self.bot.settings_service.get(interaction.guild_id)
             result = await self.bot.economy.daily(
                 interaction.guild_id, interaction.user.id, settings.daily_amount
             )
             notice = (
-                strings.DAILY_CLAIMED.format(
-                    amount=result.amount,
-                    balance=result.balance,
-                    currency=settings.currency_name,
+                Notice(
+                    strings.DAILY_CLAIMED.format(
+                        amount=result.amount,
+                        balance=result.balance,
+                        currency=settings.currency_name,
+                    )
                 )
                 if result.claimed
-                else strings.DAILY_ALREADY
+                # 已經簽到過不是錯誤也不是成功動作，用 OFF 表達中性語意。
+                else Notice(strings.DAILY_ALREADY, StatusKind.OFF)
             )
             await swap_panel(interaction, await economy_panel(self.bot, interaction, notice=notice))
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: economy_panel(self.bot, interaction, notice=note)
-            )
 
     async def leaderboard(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: economy_panel(self.bot, interaction, notice=note)
+        ):
             await swap_panel(interaction, await leaderboard_panel(self.bot, interaction))
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: economy_panel(self.bot, interaction, notice=note)
-            )
 
     async def transfer(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_modal(TransferModal(self.bot))
 
     async def admin_adjust(self, interaction: discord.Interaction) -> None:
         if not is_admin(interaction):
-            await defer_update(interaction)
-            await swap_panel(
-                interaction,
-                await economy_panel(self.bot, interaction, notice=strings.ADMIN_ONLY),
-            )
+            # 拒絕分支沒有 Modal，套 panel_action 換得「重建面板也失敗」時的保底。
+            async with panel_action(
+                interaction, lambda note: economy_panel(self.bot, interaction, notice=note)
+            ):
+                await swap_panel(
+                    interaction,
+                    await economy_panel(self.bot, interaction, notice=strings.ADMIN_ONLY),
+                )
             return
         await interaction.response.send_modal(AdminAdjustModal(self.bot))
 
 
 async def leaderboard_panel(
-    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+    bot: HoRoBot, interaction: discord.Interaction, *, notice: str | Notice | None = None
 ) -> LeaderboardPanel:
     settings = await bot.settings_service.get(interaction.guild_id)
     wallets = await bot.economy.leaderboard(interaction.guild_id, limit=100)
@@ -124,7 +130,7 @@ class LeaderboardPanel(PagedPanel):
     accent = discord.Colour.from_rgb(94, 234, 212)
     page_size = 10
 
-    def __init__(self, bot: Any, wallets: Any, *, currency: str = "", **kwargs: Any) -> None:
+    def __init__(self, bot: HoRoBot, wallets: Any, *, currency: str = "", **kwargs: Any) -> None:
         self.currency = currency
         super().__init__(bot, wallets, **kwargs)
 
@@ -152,7 +158,7 @@ class LeaderboardPanel(PagedPanel):
 
 
 class TransferModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         super().__init__(
             title=strings.TRANSFER_MODAL_TITLE, timeout=300, custom_id="cs:economy:transfer:modal"
         )
@@ -165,8 +171,10 @@ class TransferModal(discord.ui.Modal):
         self.add_item(discord.ui.Label(text=strings.AMOUNT, component=self.amount))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        # 這裡是 Modal 送出後的處理，不是「開 Modal」本身，defer 不會擋到 send_modal。
+        async with panel_action(
+            interaction, lambda note: economy_panel(self.bot, interaction, notice=note)
+        ):
             recipient = self.recipient.values[0]
             amount = int(str(self.amount).strip())
             if amount <= 0:
@@ -179,27 +187,16 @@ class TransferModal(discord.ui.Modal):
                 idempotency_key=str(interaction.id),
             )
             settings = await self.bot.settings_service.get(interaction.guild_id)
-            notice = strings.TRANSFER_DONE.format(
-                amount=amount, currency=settings.currency_name, user_id=recipient.id
+            notice = Notice(
+                strings.TRANSFER_DONE.format(
+                    amount=amount, currency=settings.currency_name, user_id=recipient.id
+                )
             )
             await swap_panel(interaction, await economy_panel(self.bot, interaction, notice=notice))
-        except ValueError as exc:
-            await swap_panel(
-                interaction,
-                await economy_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
-                ),
-            )
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: economy_panel(self.bot, interaction, notice=note)
-            )
 
 
 class AdminAdjustModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         super().__init__(
             title=strings.ADMIN_ADJUST_MODAL_TITLE,
             timeout=300,
@@ -218,8 +215,9 @@ class AdminAdjustModal(discord.ui.Modal):
         self.add_item(discord.ui.Label(text=strings.REASON, component=self.reason))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: economy_panel(self.bot, interaction, notice=note)
+        ):
             # Modal 的 interaction 不會經過開啟它的面板檢查，這道防線必須留著。
             if not is_admin(interaction):
                 await swap_panel(
@@ -237,18 +235,7 @@ class AdminAdjustModal(discord.ui.Modal):
                 idempotency_key=f"admin:{interaction.id}",
                 reason=str(self.reason).strip(),
             )
-            notice = strings.ADMIN_ADJUST_DONE.format(user_id=target.id, balance=result.balance)
+            notice = Notice(
+                strings.ADMIN_ADJUST_DONE.format(user_id=target.id, balance=result.balance)
+            )
             await swap_panel(interaction, await economy_panel(self.bot, interaction, notice=notice))
-        except ValueError as exc:
-            await swap_panel(
-                interaction,
-                await economy_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
-                ),
-            )
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: economy_panel(self.bot, interaction, notice=note)
-            )

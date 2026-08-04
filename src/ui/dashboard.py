@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import discord
 
@@ -8,11 +8,14 @@ from src import strings
 from src.ui.base import button, open_panel, section
 from src.ui.common import handle_interaction_error, send_ephemeral
 
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
+
 
 class DashboardView(discord.ui.LayoutView):
     """常駐 Components V2 主儀表板。"""
 
-    def __init__(self, bot: Any, guild: discord.Guild | None = None) -> None:
+    def __init__(self, bot: HoRoBot, guild: discord.Guild | None = None) -> None:
         super().__init__(timeout=None)
         self.bot = bot
 

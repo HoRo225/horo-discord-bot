@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -10,9 +12,12 @@ from src.ui.common import defer_ephemeral, handle_interaction_error, is_admin, s
 from src.ui.dashboard import DashboardView
 from src.ui.settings import settings_panel
 
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
+
 
 class AdminCog(commands.Cog):
-    def __init__(self, bot) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         self.bot = bot
 
     @app_commands.command(name="setup", description=strings.CMD_SETUP_DESC)
@@ -90,5 +95,5 @@ class AdminCog(commands.Cog):
         )
 
 
-async def setup(bot) -> None:
+async def setup(bot: HoRoBot) -> None:
     await bot.add_cog(AdminCog(bot))

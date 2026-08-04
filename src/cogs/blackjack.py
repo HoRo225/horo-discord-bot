@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import discord
 from discord.ext import commands, tasks
@@ -10,11 +11,14 @@ from src import strings
 from src.services.common import aware_utc
 from src.ui.blackjack import BlackjackGameView
 
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
+
 log = logging.getLogger(__name__)
 
 
 class BlackjackCog(commands.Cog):
-    def __init__(self, bot) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         self.bot = bot
 
     async def cog_load(self) -> None:
@@ -77,5 +81,5 @@ class BlackjackCog(commands.Cog):
         await self.bot.wait_until_ready()
 
 
-async def setup(bot) -> None:
+async def setup(bot: HoRoBot) -> None:
     await bot.add_cog(BlackjackCog(bot))

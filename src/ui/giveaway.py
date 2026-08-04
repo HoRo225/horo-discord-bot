@@ -3,15 +3,19 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import discord
 
 from src import strings
 from src.database.models import Giveaway
 from src.services.common import aware_utc
-from src.ui.base import PagedPanel, Panel, button, defer_update, show_error, swap_panel
+from src.ui.base import PagedPanel, Panel, button, defer_update, panel_action, swap_panel
 from src.ui.common import handle_interaction_error, is_admin, message_link
+from src.ui.status import Notice, StatusKind
+
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
 
 
 def parse_duration(value: str) -> timedelta:
@@ -68,7 +72,7 @@ class GiveawayMessageView(discord.ui.LayoutView):
     那會讓整則公告變空白。改由本類別在非 active 狀態自行收起參加按鈕。
     """
 
-    def __init__(self, bot: Any, giveaway: Giveaway | None = None) -> None:
+    def __init__(self, bot: HoRoBot, giveaway: Giveaway | None = None) -> None:
         super().__init__(timeout=None)
         self.bot = bot
         items: list[discord.ui.Item[Any]] = []
@@ -90,6 +94,7 @@ class GiveawayMessageView(discord.ui.LayoutView):
         self.add_item(discord.ui.Container(*items, accent_colour=discord.Colour.gold()))
 
     async def enter(self, interaction: discord.Interaction) -> None:
+        # 公開訊息上的按鈕沒有可重建的私人面板，錯誤只能改用獨立訊息回報。
         try:
             await defer_update(interaction)
             if interaction.message is None:
@@ -114,7 +119,7 @@ class GiveawayMessageView(discord.ui.LayoutView):
 
 
 async def giveaway_panel(
-    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+    bot: HoRoBot, interaction: discord.Interaction, *, notice: str | Notice | None = None
 ) -> GiveawayPanel:
     return GiveawayPanel(bot, notice=notice)
 
@@ -139,10 +144,13 @@ class GiveawayPanel(Panel):
         )
 
     async def _deny(self, interaction: discord.Interaction) -> None:
-        await defer_update(interaction)
-        await swap_panel(
-            interaction, await giveaway_panel(self.bot, interaction, notice=strings.ADMIN_ONLY)
-        )
+        # 拒絕分支沒有 Modal，套 panel_action 換得「重建面板也失敗」時的保底。
+        async with panel_action(
+            interaction, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+        ):
+            await swap_panel(
+                interaction, await giveaway_panel(self.bot, interaction, notice=strings.ADMIN_ONLY)
+            )
 
     async def create(self, interaction: discord.Interaction) -> None:
         if not is_admin(interaction):
@@ -151,22 +159,28 @@ class GiveawayPanel(Panel):
         await interaction.response.send_modal(CreateGiveawayModal(self.bot))
 
     async def listing(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+        ):
             await swap_panel(interaction, await giveaway_list_panel(self.bot, interaction))
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
-            )
 
     async def buy(self, interaction: discord.Interaction) -> None:
         giveaways = await self.bot.giveaways.active(interaction.guild_id)
         if not giveaways:
-            await defer_update(interaction)
-            await swap_panel(
-                interaction,
-                await giveaway_panel(self.bot, interaction, notice=strings.GIVEAWAY_NONE_ACTIVE),
-            )
+            # 半 Modal 半面板：沒有可買的抽獎才走面板分支，通過則送出 Modal，
+            # 所以只把這個分支縮進 panel_action，不能整個 callback 包起來。
+            async with panel_action(
+                interaction, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+            ):
+                await swap_panel(
+                    interaction,
+                    await giveaway_panel(
+                        self.bot,
+                        interaction,
+                        # 目前沒有活動可買，不是錯誤也不是成功，用 OFF 表達中性語意。
+                        notice=Notice(strings.GIVEAWAY_NONE_ACTIVE, StatusKind.OFF),
+                    ),
+                )
             return
         await interaction.response.send_modal(BuyTicketsModal(self.bot, giveaways))
 
@@ -179,7 +193,7 @@ class GiveawayPanel(Panel):
 
 
 async def giveaway_list_panel(
-    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+    bot: HoRoBot, interaction: discord.Interaction, *, notice: str | Notice | None = None
 ) -> GiveawayListPanel:
     giveaways = await bot.giveaways.active(interaction.guild_id, paid_only=True)
 
@@ -209,7 +223,7 @@ class GiveawayListPanel(PagedPanel):
 
 
 class CreateGiveawayModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         super().__init__(
             title=strings.GIVEAWAY_CREATE, timeout=300, custom_id="cs:giveaway:create:modal"
         )
@@ -229,8 +243,10 @@ class CreateGiveawayModal(discord.ui.Modal):
             self.add_item(discord.ui.Label(text=text, component=component))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        # 這裡是 Modal 送出後的處理，不是「開 Modal」本身，defer 不會擋到 send_modal。
+        async with panel_action(
+            interaction, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+        ):
             # Modal 的 interaction 不會經過開啟它的面板檢查，這道防線必須留著。
             if not is_admin(interaction):
                 await swap_panel(
@@ -257,32 +273,17 @@ class CreateGiveawayModal(discord.ui.Modal):
             )
             await self.bot.giveaways.attach_message(giveaway.id, message.id)
             link = message_link(interaction.guild_id, message.channel.id, message.id)
-            await swap_panel(
-                interaction,
-                await giveaway_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.GIVEAWAY_CREATED.format(giveaway_id=giveaway.id)
-                    + strings.GIVEAWAY_LINK.format(link=link),
-                ),
+            notice = Notice(
+                strings.GIVEAWAY_CREATED.format(giveaway_id=giveaway.id)
+                + strings.GIVEAWAY_LINK.format(link=link)
             )
-        except ValueError as exc:
             await swap_panel(
-                interaction,
-                await giveaway_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
-                ),
-            )
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+                interaction, await giveaway_panel(self.bot, interaction, notice=notice)
             )
 
 
 class BuyTicketsModal(discord.ui.Modal):
-    def __init__(self, bot: Any, giveaways: Sequence[Giveaway]) -> None:
+    def __init__(self, bot: HoRoBot, giveaways: Sequence[Giveaway]) -> None:
         super().__init__(title=strings.GIVEAWAY_BUY, timeout=300, custom_id="cs:giveaway:buy:modal")
         self.bot = bot
         self.target = discord.ui.Select(
@@ -293,8 +294,9 @@ class BuyTicketsModal(discord.ui.Modal):
         self.add_item(discord.ui.Label(text=strings.GIVEAWAY_QUANTITY, component=self.quantity))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+        ):
             result = await self.bot.giveaways.enter(
                 giveaway_id=int(self.target.values[0]),
                 guild_id=interaction.guild_id,
@@ -302,31 +304,14 @@ class BuyTicketsModal(discord.ui.Modal):
                 quantity=int(str(self.quantity)),
                 idempotency_key=str(interaction.id),
             )
+            notice = Notice(strings.GIVEAWAY_ENTERED.format(weight=result.weight))
             await swap_panel(
-                interaction,
-                await giveaway_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.GIVEAWAY_ENTERED.format(weight=result.weight),
-                ),
-            )
-        except ValueError as exc:
-            await swap_panel(
-                interaction,
-                await giveaway_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
-                ),
-            )
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+                interaction, await giveaway_panel(self.bot, interaction, notice=notice)
             )
 
 
 class RerollModal(discord.ui.Modal):
-    def __init__(self, bot: Any, giveaways: Sequence[Giveaway]) -> None:
+    def __init__(self, bot: HoRoBot, giveaways: Sequence[Giveaway]) -> None:
         super().__init__(
             title=strings.GIVEAWAY_REROLL, timeout=300, custom_id="cs:giveaway:reroll:modal"
         )
@@ -337,8 +322,9 @@ class RerollModal(discord.ui.Modal):
         self.add_item(discord.ui.Label(text=strings.GIVEAWAY_ID, component=self.target))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+        ):
             if not is_admin(interaction):
                 await swap_panel(
                     interaction,
@@ -355,20 +341,7 @@ class RerollModal(discord.ui.Modal):
                     strings.GIVEAWAY_REROLL_RESULT.format(id=giveaway.id, winners=winners),
                     allowed_mentions=discord.AllowedMentions(users=True),
                 )
+            notice = Notice(strings.SUCCESS)
             await swap_panel(
-                interaction,
-                await giveaway_panel(self.bot, interaction, notice=strings.SUCCESS),
-            )
-        except ValueError as exc:
-            await swap_panel(
-                interaction,
-                await giveaway_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
-                ),
-            )
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+                interaction, await giveaway_panel(self.bot, interaction, notice=notice)
             )

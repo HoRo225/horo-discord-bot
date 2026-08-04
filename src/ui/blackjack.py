@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import discord
 
@@ -16,8 +16,12 @@ from src.services.blackjack import (
     hand_value,
     state_from_game,
 )
-from src.ui.base import Panel, button, defer_update, show_error, swap_panel
+from src.ui.base import Panel, button, defer_update, panel_action, swap_panel
 from src.ui.common import handle_interaction_error, message_link
+from src.ui.status import Notice
+
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
 
 TERMINAL_PHASES = frozenset({"settled", "refunded"})
 
@@ -81,7 +85,7 @@ class BlackjackGameView(discord.ui.LayoutView):
     那會讓整張牌桌畫面消失。改由本類別自行決定終局時不放操作按鈕。
     """
 
-    def __init__(self, bot: Any, game: BlackjackGame | None = None) -> None:
+    def __init__(self, bot: HoRoBot, game: BlackjackGame | None = None) -> None:
         super().__init__(timeout=None)
         self.bot = bot
         items: list[discord.ui.Item[Any]] = [discord.ui.TextDisplay(strings.BLACKJACK_EMBED_TITLE)]
@@ -183,6 +187,7 @@ class BlackjackGameView(discord.ui.LayoutView):
         )
 
     async def _act(self, interaction: discord.Interaction, action: str) -> None:
+        # 公開牌桌訊息上的按鈕沒有可重建的私人面板，錯誤只能改用獨立訊息回報。
         try:
             await defer_update(interaction)
             game = await self._game(interaction)
@@ -241,7 +246,7 @@ class BlackjackGameView(discord.ui.LayoutView):
 
 
 async def blackjack_panel(
-    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+    bot: HoRoBot, interaction: discord.Interaction, *, notice: str | Notice | None = None
 ) -> BlackjackPanel:
     return BlackjackPanel(bot, notice=notice)
 
@@ -279,9 +284,11 @@ class BlackjackPanel(Panel):
         await interaction.response.send_modal(CustomBetModal(self.bot))
 
     async def stats(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: blackjack_panel(self.bot, interaction, notice=note)
+        ):
             stats = await self.bot.blackjack.stats(interaction.guild_id, interaction.user.id)
+            # 純戰績展示，不是操作成功/失敗的回饋，維持原樣文字、不套 Notice 徽章。
             notice = (
                 strings.BLACKJACK_NO_STATS
                 if stats is None
@@ -297,14 +304,10 @@ class BlackjackPanel(Panel):
             await swap_panel(
                 interaction, await blackjack_panel(self.bot, interaction, notice=notice)
             )
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: blackjack_panel(self.bot, interaction, notice=note)
-            )
 
 
 class CustomBetModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
+    def __init__(self, bot: HoRoBot) -> None:
         super().__init__(
             title=strings.BLACKJACK_CUSTOM_BET, timeout=300, custom_id="cs:blackjack:bet:modal"
         )
@@ -313,25 +316,19 @@ class CustomBetModal(discord.ui.Modal):
         self.add_item(discord.ui.Label(text=strings.BLACKJACK_BET_AMOUNT, component=self.amount))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
+        # 這裡是 Modal 送出後的處理，不是「開 Modal」本身，defer 不會擋到 send_modal；
+        # 金額解析失敗會被 panel_action 的 ValueError 分支接住，行為與原本一致。
+        async with panel_action(
+            interaction, lambda note: blackjack_panel(self.bot, interaction, notice=note)
+        ):
             amount = int(str(self.amount).strip())
-        except ValueError as exc:
-            await defer_update(interaction)
-            await swap_panel(
-                interaction,
-                await blackjack_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
-                ),
-            )
-            return
-        await start_game(self.bot, interaction, amount)
+            await start_game(self.bot, interaction, amount)
 
 
-async def start_game(bot: Any, interaction: discord.Interaction, amount: int) -> None:
-    try:
-        await defer_update(interaction)
+async def start_game(bot: HoRoBot, interaction: discord.Interaction, amount: int) -> None:
+    async with panel_action(
+        interaction, lambda note: blackjack_panel(bot, interaction, notice=note)
+    ):
         result = await bot.blackjack.start(
             guild_id=interaction.guild_id,
             user_id=interaction.user.id,
@@ -351,13 +348,5 @@ async def start_game(bot: Any, interaction: discord.Interaction, amount: int) ->
             await bot.blackjack.refund_missing_message(result.game.id)
             raise
         link = message_link(interaction.guild_id, message.channel.id, message.id)
-        await swap_panel(
-            interaction,
-            await blackjack_panel(
-                bot, interaction, notice=strings.BLACKJACK_GAME_CREATED.format(link=link)
-            ),
-        )
-    except Exception as exc:
-        await show_error(
-            interaction, exc, lambda note: blackjack_panel(bot, interaction, notice=note)
-        )
+        notice = Notice(strings.BLACKJACK_GAME_CREATED.format(link=link))
+        await swap_panel(interaction, await blackjack_panel(bot, interaction, notice=notice))

@@ -91,9 +91,6 @@ class ConversationMemory:
         while queue and total > self.max_characters:
             total -= len(queue.popleft().message.content)
 
-    def clear_channel(self, guild_id: int, channel_id: int) -> None:
-        self._channels.pop((guild_id, channel_id), None)
-
 
 class InMemoryRateLimiter:
     def __init__(self, interval_seconds: float) -> None:

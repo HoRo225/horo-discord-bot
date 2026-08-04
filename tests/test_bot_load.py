@@ -26,9 +26,7 @@ async def test_all_cogs_load_and_only_documented_commands_are_registered(tmp_pat
             await bot.load_extension(extension)
         assert set(bot.cogs) == {
             "AdminCog",
-            "WelcomeCog",
             "EventLogCog",
-            "EconomyCog",
             "GiveawayCog",
             "PollCog",
             "BlackjackCog",

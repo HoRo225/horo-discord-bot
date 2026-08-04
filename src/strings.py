@@ -15,6 +15,12 @@ CMD_SETTINGS_DESC = "開啟伺服器設定面板"
 CMD_HELP_DESC = "顯示使用說明"
 CMD_PING_DESC = "檢查 Bot 延遲"
 
+# 狀態徽章：面板統一用這四個符號表達「成功／未設定／需注意／失敗」，語意見 ui.status
+STATUS_BADGE_OK = "✅"
+STATUS_BADGE_OFF = "⬜"
+STATUS_BADGE_WARN = "⚠️"
+STATUS_BADGE_ERROR = "❌"
+
 DASHBOARD_TITLE = "# ❄️ HoRo 儀表板"
 DASHBOARD_BODY = "選擇下方功能；所有操作都會以私人訊息面板回覆。"
 DASHBOARD_UPDATED = "儀表板已部署或更新。"
@@ -25,7 +31,7 @@ DASHBOARD_GIVEAWAY = "抽獎商店"
 DASHBOARD_POLL = "投票"
 
 SETTINGS_TITLE = "伺服器設定"
-SETTINGS_WELCOME = "歡迎／送別與日誌"
+SETTINGS_LOG = "日誌"
 SETTINGS_ECONOMY = "經濟與 21 點"
 SETTINGS_POLL = "投票權限"
 SETTINGS_AI = "AI 聊天"
@@ -34,14 +40,18 @@ PREVIOUS_PAGE = "上一頁"
 NEXT_PAGE = "下一頁"
 NAV_BACK = "返回"
 PAGE_INDICATOR = "第 {page} / {total} 頁"
+# settings 各頁共用的導覽選單：選項文字集中在這裡，nav.py 只負責組裝元件
+NAV_SETTINGS_PLACEHOLDER = "切換設定頁"
+NAV_CURRENT_MARK = "✓"
+NAV_SETTINGS_HOME = "設定總覽"
+NAV_SETTINGS_HOME_DESC = "查看四大模組狀態，並開啟各自的編輯視窗"
+NAV_LOG_TOGGLES_DESC = "開關成員進出與訊息刪改的日誌記錄"
+NAV_MODEL_DESC = "從可用清單直接挑選 AI 模型"
+
 SETTINGS_LOG_TOGGLES = "日誌事件開關"
 SETTINGS_LOG_MEMBERS = "成員事件"
 SETTINGS_LOG_MESSAGES = "訊息事件"
-WELCOME_CHANNEL_ID = "歡迎頻道 ID（留空停用）"
-GOODBYE_CHANNEL_ID = "送別頻道 ID（留空停用）"
 LOG_CHANNEL_ID = "日誌頻道 ID（留空停用）"
-WELCOME_TEMPLATE = "歡迎訊息模板"
-GOODBYE_TEMPLATE = "送別訊息模板"
 CURRENCY_NAME = "貨幣名稱"
 DAILY_AMOUNT = "每日簽到金額"
 BLACKJACK_MIN_BET = "21 點最低下注"
@@ -192,7 +202,7 @@ EVENT_NO_TEXT = "（無文字）"
 
 SETTING_NOT_CONFIGURED = "未設定"
 SETTINGS_EDIT = "編輯"
-SETTINGS_WELCOME_SUMMARY = "**{title}**\n歡迎：{welcome}｜離開：{goodbye}｜日誌：{log}"
+SETTINGS_LOG_SUMMARY = "**{title}**\n日誌：{log}"
 SETTINGS_ECONOMY_SUMMARY = (
     "**{title}**\n貨幣：**{currency}**｜簽到：**{daily}**｜21 點：**{minimum}–{maximum}**"
 )
@@ -202,12 +212,6 @@ TOGGLE_ON = "開"
 TOGGLE_OFF = "關"
 
 # 服務層驗證訊息（會由互動錯誤處理器顯示）
-ERR_TEMPLATE_EMPTY = "訊息模板不可為空"
-ERR_TEMPLATE_TOO_LONG = "訊息模板不可超過 1,500 字"
-ERR_TEMPLATE_BRACES = "訊息模板的大括號格式不正確"
-ERR_TEMPLATE_UNKNOWN = "不支援的模板變數：{fields}"
-ERR_INVALID_ID = "`{value}` 不是有效 ID"
-ERR_ID_POSITIVE = "ID 必須大於 0"
 ERR_UNKNOWN_SETTINGS = "未知設定欄位：{fields}"
 ERR_CURRENCY_LENGTH = "貨幣名稱須為 1–50 字"
 ERR_AMOUNT_NEGATIVE = "金額不可為負數"
@@ -260,9 +264,6 @@ ERR_BET_ALREADY_HANDLED = "這次下注已處理"
 ERR_GAME_ACTION_PHASE = "目前不能執行牌局動作"
 ERR_GAME_ACTION = "目前不能執行這個動作"
 ERR_UNKNOWN_GAME_ACTION = "未知的牌局動作"
-
-WELCOME_DEFAULT = "歡迎 {user} 加入 {server}！你是第 {count} 位成員。"
-GOODBYE_DEFAULT = "{user} 離開了 {server}，目前共有 {count} 位成員。"
 
 HELP_TEXT = """# HoRo 使用說明
 `/setup`：部署或更新常駐儀表板（管理員）

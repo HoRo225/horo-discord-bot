@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TypeVar
 
@@ -52,10 +52,6 @@ class Database:
             cursor.execute("PRAGMA busy_timeout=30000")
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
-
-    async def session(self) -> AsyncIterator[AsyncSession]:
-        async with self.session_factory() as session:
-            yield session
 
     async def dispose(self) -> None:
         await self.engine.dispose()

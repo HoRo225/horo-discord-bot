@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import discord
 
@@ -13,10 +13,15 @@ from src.ui.base import (
     Panel,
     button,
     defer_update,
+    panel_action,
     show_error,
     swap_panel,
 )
 from src.ui.common import is_admin, message_link
+from src.ui.status import Notice
+
+if TYPE_CHECKING:
+    from src.bot import HoRoBot
 
 
 def _parse_bool(value: str) -> bool:
@@ -28,7 +33,7 @@ def _parse_bool(value: str) -> bool:
     raise ValueError(strings.POLL_MULTIPLE_INVALID)
 
 
-async def can_create_poll(bot: Any, interaction: discord.Interaction) -> bool:
+async def can_create_poll(bot: HoRoBot, interaction: discord.Interaction) -> bool:
     if is_admin(interaction):
         return True
     settings = await bot.settings_service.get(interaction.guild_id)
@@ -37,7 +42,7 @@ async def can_create_poll(bot: Any, interaction: discord.Interaction) -> bool:
 
 
 async def poll_panel(
-    bot: Any, interaction: discord.Interaction, *, notice: str | None = None
+    bot: HoRoBot, interaction: discord.Interaction, *, notice: str | Notice | None = None
 ) -> PollPanel:
     """組出投票主面板。目前不需要查資料庫，但維持 async 工廠以配合返回鈕的呼叫慣例。"""
     return PollPanel(bot, notice=notice)
@@ -59,6 +64,8 @@ class PollPanel(Panel):
         )
 
     async def create(self, interaction: discord.Interaction) -> None:
+        # 半 Modal 半面板：權限檢查與 send_modal 都可能拋錯，但 send_modal 必須是
+        # 首個 response，不能整個包進 panel_action（它一進來就會 defer）。
         try:
             if not await can_create_poll(self.bot, interaction):
                 await defer_update(interaction)
@@ -74,21 +81,18 @@ class PollPanel(Panel):
             )
 
     async def listing(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        async with panel_action(
+            interaction, lambda note: poll_panel(self.bot, interaction, notice=note)
+        ):
             await swap_panel(interaction, await poll_list_panel(self.bot, interaction))
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: poll_panel(self.bot, interaction, notice=note)
-            )
 
 
 async def poll_list_panel(
-    bot: Any,
+    bot: HoRoBot,
     interaction: discord.Interaction,
     *,
     page: int = 0,
-    notice: str | None = None,
+    notice: str | Notice | None = None,
 ) -> PollListPanel:
     polls = await bot.polls.active(interaction.guild_id)
 
@@ -116,30 +120,33 @@ class PollListPanel(PagedPanel):
 
 
 class CreatePollModal(discord.ui.Modal):
-    def __init__(self, bot: Any) -> None:
-        super().__init__(title=strings.POLL_CREATE, custom_id="cs:poll:create:modal")
+    def __init__(self, bot: HoRoBot) -> None:
+        super().__init__(title=strings.POLL_CREATE, timeout=300, custom_id="cs:poll:create:modal")
         self.bot = bot
-        self.question = discord.ui.TextInput(label=strings.POLL_QUESTION, max_length=300)
+        self.question = discord.ui.TextInput(max_length=300)
         self.options = discord.ui.TextInput(
-            label=strings.POLL_OPTIONS,
             style=discord.TextStyle.paragraph,
             min_length=3,
             max_length=600,
         )
-        self.duration = discord.ui.TextInput(
-            label=strings.POLL_DURATION_HOURS, default="24", max_length=8
-        )
+        self.duration = discord.ui.TextInput(default="24", max_length=8)
         self.multiple = discord.ui.TextInput(
-            label=strings.POLL_MULTIPLE,
             default=strings.POLL_MULTIPLE_DEFAULT,
             max_length=5,
         )
-        for item in (self.question, self.options, self.duration, self.multiple):
-            self.add_item(item)
+        for text, component in (
+            (strings.POLL_QUESTION, self.question),
+            (strings.POLL_OPTIONS, self.options),
+            (strings.POLL_DURATION_HOURS, self.duration),
+            (strings.POLL_MULTIPLE, self.multiple),
+        ):
+            self.add_item(discord.ui.Label(text=text, component=component))
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        try:
-            await defer_update(interaction)
+        # 這裡是 Modal 送出後的處理，不是「開 Modal」本身，defer 不會擋到 send_modal。
+        async with panel_action(
+            interaction, lambda note: poll_panel(self.bot, interaction, notice=note)
+        ):
             if not await can_create_poll(self.bot, interaction):
                 await swap_panel(
                     interaction,
@@ -172,18 +179,5 @@ class CreatePollModal(discord.ui.Modal):
             )
             await self.bot.polls.attach_message(poll_record.id, message.id)
             link = message_link(interaction.guild_id, message.channel.id, message.id)
-            notice = strings.POLL_CREATED + strings.POLL_LINK.format(link=link)
+            notice = Notice(strings.POLL_CREATED + strings.POLL_LINK.format(link=link))
             await swap_panel(interaction, await poll_panel(self.bot, interaction, notice=notice))
-        except ValueError as exc:
-            await swap_panel(
-                interaction,
-                await poll_panel(
-                    self.bot,
-                    interaction,
-                    notice=strings.INVALID_INPUT.format(reason=str(exc)),
-                ),
-            )
-        except Exception as exc:
-            await show_error(
-                interaction, exc, lambda note: poll_panel(self.bot, interaction, notice=note)
-            )

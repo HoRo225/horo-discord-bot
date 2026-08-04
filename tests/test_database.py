@@ -32,6 +32,11 @@ async def test_alembic_upgrade_can_run_twice(tmp_path):
                 await connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
             )
         }
+        guild_settings_columns = {
+            row[1] for row in (await connection.execute(text("PRAGMA table_info(guild_settings)")))
+        }
     await engine.dispose()
-    assert revision == "20260803_0001"
+    assert revision == "20260804_0002"
     assert {"wallets", "giveaways", "polls", "blackjack_games", "ai_usage"} <= tables
+    # 歡迎功能已整檔移除，guild_settings 不應再殘留這些欄位。
+    assert "welcome_channel_id" not in guild_settings_columns
