@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 from src import strings
 from src.services.ai.base import AIProvider, ChatMessage
@@ -66,7 +67,11 @@ class AIConversationService:
         guild_model: str | None,
         guild_quota: int,
         user_quota: int,
+        now: datetime | None = None,
     ) -> str:
+        # 整段流程共用同一個時間點：配額是按台北日期分列的，若讓 reserve 與
+        # release 各自重算「今天」，跨午夜失敗的請求會扣在昨天、退在今天。
+        current = now or datetime.now(UTC)
         model = guild_model or self.default_model
         if not model:
             raise AIDisabledError(strings.AI_DISABLED)
@@ -87,11 +92,14 @@ class AIConversationService:
             user_id=user_id,
             guild_quota=guild_quota,
             user_quota=user_quota,
+            now=current,
         )
         try:
             response = await self.provider.chat(model=model, messages=request_messages)
-        except Exception:
-            await self._safe_release(guild_id, user_id)
+        except BaseException:
+            # 用 BaseException 而非 Exception：互動逾時或使用者取消會讓這個 task
+            # 收到 CancelledError（繼承自 BaseException），那同樣沒有真的用掉配額。
+            await self._safe_release(guild_id, user_id, now=current)
             raise
 
         response = truncate_ai_response(self._redact(response), self.max_response_chars)
@@ -101,7 +109,10 @@ class AIConversationService:
         # 配額判定（配額看的是 request_count），換得「送訊息完全不碰配額」的乾淨邊界。
         try:
             await self.quota.record_characters(
-                guild_id=guild_id, user_id=user_id, character_count=len(response)
+                guild_id=guild_id,
+                user_id=user_id,
+                character_count=len(response),
+                now=current,
             )
         except Exception:
             log.exception("記錄 AI 回應字數失敗", extra={"guild_id": guild_id})
@@ -110,9 +121,9 @@ class AIConversationService:
     def _redact(self, text: str) -> str:
         return redact_sensitive(text, known_secrets=self.known_secrets)
 
-    async def _safe_release(self, guild_id: int, user_id: int) -> None:
+    async def _safe_release(self, guild_id: int, user_id: int, *, now: datetime) -> None:
         """補償失敗不該蓋掉原始的上游錯誤，所以只記錄不外拋。"""
         try:
-            await self.quota.release(guild_id=guild_id, user_id=user_id)
+            await self.quota.release(guild_id=guild_id, user_id=user_id, now=now)
         except Exception:
             log.exception("回退 AI 配額失敗", extra={"guild_id": guild_id})

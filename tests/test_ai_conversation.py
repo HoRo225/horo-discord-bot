@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, date, datetime, timedelta
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +29,7 @@ USER_ID = 3
 
 
 class FakeProvider(AIProvider):
-    def __init__(self, response: str = "你好", *, error: Exception | None = None) -> None:
+    def __init__(self, response: str = "你好", *, error: BaseException | None = None) -> None:
         self.response = response
         self.error = error
         self.calls: list[tuple[str, list[ChatMessage]]] = []
@@ -134,6 +137,51 @@ async def test_upstream_failure_releases_reserved_quota(db):
         await _respond(service)
     assert await _usage_counts(db) == (0, 0)
     assert service.memory.get(GUILD_ID, CHANNEL_ID) == []
+
+
+async def _usage_count_on(db: Database, day: date) -> int:
+    async def operation(session: AsyncSession) -> int:
+        usage = await session.get(AIUsage, (GUILD_ID, USER_ID, day))
+        return usage.request_count if usage else 0
+
+    return await db.run_transaction(operation)
+
+
+async def test_quota_release_lands_on_the_day_the_request_was_reserved(db):
+    """配額按台北日期分列；跨午夜失敗若讓 release 重算日期會扣在昨天、退在今天。"""
+    # 台北時間 23:59（UTC+8）：此刻預留、稍後才失敗的請求最容易踩到跨日。
+    # 日期刻意取一個永遠不會等於「今天」的過去日，否則 release 重算日期的
+    # 錯誤行為會剛好落在同一天，測試就抓不到。
+    late_night = datetime(2020, 1, 1, 15, 59, tzinfo=UTC)
+    reserved_day = taipei_today(late_night)
+    next_day = taipei_today(late_night + timedelta(minutes=2))
+    assert reserved_day != next_day
+
+    succeeding = _service(db, rate_limiter=InMemoryRateLimiter(0))
+    await _respond(succeeding, now=late_night)
+    assert await _usage_count_on(db, reserved_day) == 1
+
+    failing = _service(
+        db,
+        rate_limiter=InMemoryRateLimiter(0),
+        provider=FakeProvider(error=AIUpstreamError("上游炸了")),
+    )
+    with pytest.raises(AIUpstreamError):
+        await _respond(failing, now=late_night)
+
+    # 失敗那次要退回「預留當下」那一天，成功那次的計數不受影響。
+    assert await _usage_count_on(db, reserved_day) == 1
+    assert await _usage_count_on(db, next_day) == 0
+
+
+async def test_cancellation_also_releases_reserved_quota(db):
+    """互動逾時或使用者取消會丟 CancelledError，那同樣沒有真的用掉配額。"""
+    service = _service(db, provider=FakeProvider(error=asyncio.CancelledError()))
+
+    with pytest.raises(asyncio.CancelledError):
+        await _respond(service)
+
+    assert await _usage_counts(db) == (0, 0)
 
 
 async def test_known_secret_is_redacted_both_ways(db):
