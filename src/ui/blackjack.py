@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -18,11 +20,13 @@ from src.services.blackjack import (
     state_from_game,
 )
 from src.ui.base import Panel, button, defer_update, panel_action, swap_panel
-from src.ui.common import handle_interaction_error, message_link
+from src.ui.common import discard_published_message, handle_interaction_error, message_link
 from src.ui.status import Notice
 
 if TYPE_CHECKING:
     from src.bot import HoRoBot
+
+log = logging.getLogger(__name__)
 
 
 RESULT_NAMES = {
@@ -325,6 +329,14 @@ class CustomBetModal(discord.ui.Modal):
             await start_game(self.bot, interaction, amount)
 
 
+async def _refund_unpublished_game(bot: HoRoBot, game_id: str) -> None:
+    """盡力退款，但補償失敗不可蓋掉原始 send/attach/cancellation 例外。"""
+    try:
+        await bot.blackjack.refund_missing_message(game_id)
+    except (Exception, asyncio.CancelledError):
+        log.exception("回退未發布的 21 點牌局失敗", extra={"game_id": game_id})
+
+
 async def start_game(bot: HoRoBot, interaction: discord.Interaction, amount: int) -> None:
     async with panel_action(
         interaction, lambda note: blackjack_panel(bot, interaction, notice=note)
@@ -336,16 +348,21 @@ async def start_game(bot: HoRoBot, interaction: discord.Interaction, amount: int
             bet=amount,
             idempotency_key=str(interaction.id),
         )
-        if interaction.channel is None:
-            raise RuntimeError(strings.CURRENT_CHANNEL_NOT_FOUND)
+        message: discord.Message | None = None
         try:
+            if interaction.channel is None:
+                raise RuntimeError(strings.CURRENT_CHANNEL_NOT_FOUND)
             message = await interaction.channel.send(
                 view=BlackjackGameView(bot, result.game),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             await bot.blackjack.attach_message(result.game.id, message.id)
-        except Exception:
-            await bot.blackjack.refund_missing_message(result.game.id)
+        except BaseException:
+            # start() 已經扣款並建立 game。任何後續失敗（包含 CancelledError）都要先
+            # 退款；若 Discord 訊息已送出，再把 ghost table 一併撤回。
+            await _refund_unpublished_game(bot, result.game.id)
+            if message is not None:
+                await discard_published_message(message)
             raise
         link = message_link(interaction.guild_id, message.channel.id, message.id)
         notice = Notice(strings.BLACKJACK_GAME_CREATED.format(link=link))
