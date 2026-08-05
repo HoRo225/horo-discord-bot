@@ -35,6 +35,12 @@ class SettingsService:
         return settings
 
     async def get(self, guild_id: int) -> GuildSettings:
+        # 絕大多數設定讀取都是純 SELECT，不應為了「萬一尚未初始化」就先拿
+        # BEGIN IMMEDIATE 的全域 writer lock。只有真的缺 row 時才進寫入交易建立預設值。
+        async with self.db.session_factory() as session:
+            settings = await session.get(GuildSettings, guild_id)
+            if settings is not None:
+                return settings
         return await self.db.run_transaction(lambda session: self.get_in_session(session, guild_id))
 
     async def update(
@@ -72,7 +78,13 @@ class SettingsService:
             if not 1 <= len(name) <= 50:
                 raise ValidationError(strings.ERR_CURRENCY_LENGTH)
             values["currency_name"] = name
-        for key in ("daily_amount", "blackjack_min_bet", "blackjack_max_bet"):
+        if "daily_amount" in values:
+            daily = int(values["daily_amount"])
+            if daily <= 0:
+                raise ValidationError(strings.ERR_DAILY_POSITIVE)
+            if daily > MAX_AMOUNT:
+                raise ValidationError(strings.ERR_AMOUNT_LIMIT.format(limit=MAX_AMOUNT))
+        for key in ("blackjack_min_bet", "blackjack_max_bet"):
             if key in values and not 0 <= int(values[key]) <= MAX_AMOUNT:
                 raise ValidationError(strings.ERR_AMOUNT_LIMIT.format(limit=MAX_AMOUNT))
         for key in ("ai_daily_guild_quota", "ai_daily_user_quota"):
@@ -94,6 +106,11 @@ class SettingsService:
             maximum = int(values.get("blackjack_max_bet", settings.blackjack_max_bet))
             if minimum <= 0 or maximum < minimum:
                 raise ValidationError(strings.ERR_BET_LIMITS)
+            # BlackjackService 只接受偶數下注。設定區間若完全沒有偶數，管理員雖然能
+            # 成功儲存設定，玩家卻沒有任何合法下注金額，因此在寫入前就拒絕。
+            first_even = minimum if minimum % 2 == 0 else minimum + 1
+            if first_even > maximum:
+                raise ValidationError(strings.BLACKJACK_EVEN_BET)
             before = {key: getattr(settings, key) for key in values}
             for key, value in values.items():
                 setattr(settings, key, value)
