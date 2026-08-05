@@ -14,11 +14,39 @@ if [ -n "$blocked" ]; then
   exit 1
 fi
 
-# ruff 不在 PATH（未啟動 venv）就跳過，不要卡住 commit
-command -v ruff >/dev/null 2>&1 || exit 0
-
 py=$(printf '%s\n' "$staged" | grep '\.py$' || true)
-if [ -n "$py" ]; then
-  printf '%s\n' $py | xargs ruff check
-  printf '%s\n' $py | xargs ruff format --check
+[ -z "$py" ] && exit 0
+
+# 沒啟動 venv 時自己找得到工具就好，但絕不靜默放行——那等於這個 hook 不存在。
+if command -v ruff >/dev/null 2>&1; then
+  ruff_bin=ruff
+elif [ -x .venv/Scripts/ruff.exe ]; then
+  ruff_bin=.venv/Scripts/ruff.exe
+elif [ -x .venv/bin/ruff ]; then
+  ruff_bin=.venv/bin/ruff
+else
+  echo "pre-commit: 找不到 ruff。請啟動 venv，或執行 pip install -r requirements-dev.txt"
+  exit 1
 fi
+
+printf '%s\n' $py | xargs "$ruff_bin" check
+printf '%s\n' $py | xargs "$ruff_bin" format --check
+
+if [ -n "$HORO_SKIP_TESTS" ]; then
+  echo "pre-commit: 已依 HORO_SKIP_TESTS 略過測試。"
+  exit 0
+fi
+
+if command -v python >/dev/null 2>&1 && python -c "import pytest" >/dev/null 2>&1; then
+  py_bin=python
+elif [ -x .venv/Scripts/python.exe ]; then
+  py_bin=.venv/Scripts/python.exe
+elif [ -x .venv/bin/python ]; then
+  py_bin=.venv/bin/python
+else
+  echo "pre-commit: 找不到帶 pytest 的 python。請啟動 venv，或設 HORO_SKIP_TESTS=1 明確略過"
+  exit 1
+fi
+
+# 跑全套：這個專案的測試不到三秒，沒必要為了挑檔案而冒漏測風險。
+"$py_bin" -m pytest -q -x

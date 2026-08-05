@@ -50,3 +50,35 @@ async def test_alembic_upgrade_can_run_twice(tmp_path):
     assert {"wallets", "giveaways", "polls", "blackjack_games", "ai_usage"} <= tables
     # 歡迎功能已整檔移除，guild_settings 不應再殘留這些欄位。
     assert "welcome_channel_id" not in guild_settings_columns
+
+
+async def test_migrations_produce_the_same_schema_as_the_orm_models(tmp_path):
+    """conftest 的 db fixture 走 create_all，migration 壞掉測試不會紅。
+
+    正式啟動走的是 alembic（bot.py 的 upgrade_database），所以兩條路徑
+    產出的 schema 必須一致，否則「只改 model 忘了寫 migration」會一路
+    通過測試直到部署才炸。
+    """
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from src.database.models import Base
+
+    path = (tmp_path / "drift.db").as_posix()
+    url = f"sqlite+aiosqlite:///{path}"
+    await upgrade_database(url)
+
+    engine = create_async_engine(url)
+
+    def _diff(sync_connection):
+        context = MigrationContext.configure(sync_connection, opts={"compare_type": True})
+        return compare_metadata(context, Base.metadata)
+
+    async with engine.connect() as connection:
+        diff = await connection.run_sync(_diff)
+    await engine.dispose()
+
+    # alembic 自己的版本表不在 ORM metadata 裡，是預期中的差異。
+    drift = [entry for entry in diff if "alembic_version" not in str(entry)]
+    assert drift == [], f"migration 與 ORM model 不一致：{drift}"
