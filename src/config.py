@@ -67,6 +67,12 @@ class Settings:
         database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/horo.db").strip()
         if not database_url:
             raise ValueError("DATABASE_URL 不可為空")
+        if not database_url.startswith("sqlite"):
+            raise ValueError(
+                "DATABASE_URL 只接受 SQLite。本專案的冪等、配額與上限檢查都是"
+                "先讀後寫，正確性依賴 SQLite BEGIN IMMEDIATE 的寫入序列化；"
+                "換成其他後端會靜默失去這些保證，必須先補上 row-level locking。"
+            )
 
         return cls(
             discord_token=token,

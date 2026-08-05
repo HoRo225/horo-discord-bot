@@ -1,4 +1,6 @@
 services:
+  # 單一實例架構，不可 --scale bot=N：資料庫是 SQLite，檔案鎖無法跨容器，
+  # 且背景結算迴圈沒有多 worker 的所有權機制，會重複發出結束公告。
   bot:
     build:
       context: .

@@ -20,19 +20,26 @@ T = TypeVar("T")
 
 
 class Database:
+    """只支援 SQLite。
+
+    全專案的冪等、AI 配額與各種上限檢查都是「先讀後寫」，本身沒有 DB 層的
+    互斥保護，正確性完全來自 run_transaction 的 BEGIN IMMEDIATE 寫入序列化。
+    換成其他後端不會報錯，只會靜默失去這些保證，因此 Settings.from_env()
+    會在入口直接擋下非 SQLite 的 DATABASE_URL。
+    """
+
     def __init__(self, url: str) -> None:
         self.url = url
         self._ensure_sqlite_directory()
         self.engine: AsyncEngine = create_async_engine(
             url,
             pool_pre_ping=True,
-            connect_args={"timeout": 30} if url.startswith("sqlite") else {},
+            connect_args={"timeout": 30},
         )
         self.session_factory = async_sessionmaker(
             self.engine, expire_on_commit=False, class_=AsyncSession
         )
-        if url.startswith("sqlite"):
-            self._configure_sqlite()
+        self._configure_sqlite()
 
     def _ensure_sqlite_directory(self) -> None:
         prefix = "sqlite+aiosqlite:///"
@@ -85,10 +92,9 @@ class Database:
     ) -> T:
         async def transactional(session: AsyncSession) -> T:
             try:
-                if self.url.startswith("sqlite"):
-                    await session.execute(text("BEGIN IMMEDIATE"))
-                else:
-                    await session.begin()
+                # BEGIN IMMEDIATE 立即取得寫鎖，讓所有寫入交易互相序列化。
+                # 這是全專案「先讀後寫」邏輯唯一的併發保護，不可移除。
+                await session.execute(text("BEGIN IMMEDIATE"))
                 result = await operation(session)
                 await session.commit()
                 return result
