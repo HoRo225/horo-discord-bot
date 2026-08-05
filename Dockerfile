@@ -22,7 +22,9 @@ RUN mkdir -p /app/data && chown horo:horo /app/data
 
 USER horo
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+# 這是 healthcheck 唯一的定義處，compose 不再重複一份。
+# start_period 要涵蓋啟動時的 alembic 升級與指令同步，之後才會有第一次心跳。
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD ["python", "-m", "src.healthcheck"]
 
 CMD ["python", "-m", "src.main"]

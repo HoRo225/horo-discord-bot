@@ -8,6 +8,15 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# 心跳檔。healthcheck 是 docker exec 出來的獨立行程，讀不到主行程的記憶體，
+# 只能靠檔案時間戳判斷 bot 是否還活著。放 /tmp（compose 掛的是 tmpfs）而不是
+# /app/data：心跳是執行期狀態不是資料，寫進 bind mount 會落到 host 磁碟，
+# 也會被 scripts/backup.py 掃到；tmpfs 開機即空，容器重啟不會繼承上次的心跳。
+HEARTBEAT_PATH = Path("/tmp/horo-heartbeat")  # noqa: S108
+HEARTBEAT_INTERVAL_SECONDS = 15
+# 容許漏掉三拍再判定為不健康，避免偶發的排程延遲造成誤殺。
+HEARTBEAT_MAX_AGE_SECONDS = 60
+
 
 def _optional_int(name: str) -> int | None:
     value = os.getenv(name, "").strip()

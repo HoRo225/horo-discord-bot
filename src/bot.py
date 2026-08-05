@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from src import strings
-from src.config import Settings
+from src.config import HEARTBEAT_INTERVAL_SECONDS, HEARTBEAT_PATH, Settings
 from src.database.engine import Database
 from src.database.migrations import upgrade_database
 from src.services.ai import (
@@ -97,6 +98,27 @@ class HoRoBot(commands.AutoShardedBot):
             synced = await self.tree.sync()
             log.info("已同步 %s 個全域指令", len(synced))
 
+        self.write_heartbeat.start()
+
+    @tasks.loop(seconds=HEARTBEAT_INTERVAL_SECONDS)
+    async def write_heartbeat(self) -> None:
+        """定期更新心跳檔，讓 healthcheck 能看出 bot 是不是還活著。
+
+        關鍵在於只有在 gateway 真的連著時才寫：這樣連線中斷時心跳自然停更，
+        健康狀態反映的是「bot 還在運作」而不只是「行程還沒死」。
+        """
+        if self.is_closed() or not self.is_ready():
+            return
+        try:
+            HEARTBEAT_PATH.write_text(str(time.time()), encoding="utf-8")
+        except OSError:
+            # 心跳寫不進去不該讓 bot 停擺，但要留下痕跡，否則會誤判成 gateway 斷線。
+            log.exception("寫入心跳檔失敗", extra={"path": str(HEARTBEAT_PATH)})
+
+    @write_heartbeat.before_loop
+    async def before_write_heartbeat(self) -> None:
+        await self.wait_until_ready()
+
     async def on_ready(self) -> None:
         log.info(
             "Bot 已上線",
@@ -126,6 +148,7 @@ class HoRoBot(commands.AutoShardedBot):
 
     async def close(self) -> None:
         try:
+            self.write_heartbeat.cancel()
             await super().close()
         finally:
             await self.ai_provider.close()
