@@ -15,22 +15,33 @@ if [ -n "$blocked" ]; then
 fi
 
 py=$(printf '%s\n' "$staged" | grep '\.py$' || true)
-[ -z "$py" ] && exit 0
 
-# 沒啟動 venv 時自己找得到工具就好，但絕不靜默放行——那等於這個 hook 不存在。
-if command -v ruff >/dev/null 2>&1; then
-  ruff_bin=ruff
-elif [ -x .venv/Scripts/ruff.exe ]; then
-  ruff_bin=.venv/Scripts/ruff.exe
-elif [ -x .venv/bin/ruff ]; then
-  ruff_bin=.venv/bin/ruff
-else
-  echo "pre-commit: 找不到 ruff。請啟動 venv，或執行 pip install -r requirements-dev.txt"
-  exit 1
+# tests/test_config.py 會讀 .env.example 與 docker-compose.yml 比對，正是用來防
+# 設定漂移的；只改設定檔卻不跑測試，等於讓那道防線失效。
+cfg=$(printf '%s\n' "$staged" | grep -E \
+  '(^|/)(docker-compose\.ya?ml|Dockerfile|\.env\.example|requirements[^/]*\.txt|pytest\.ini|pyproject\.toml|alembic\.ini)$|^alembic/' \
+  || true)
+
+[ -z "$py" ] && [ -z "$cfg" ] && exit 0
+
+# ruff 只對 .py 跑。這個 if 不可省：$py 為空時 xargs 會以零參數執行，
+# 導致 ruff 退化成掃整個目錄。
+if [ -n "$py" ]; then
+  # 沒啟動 venv 時自己找得到工具就好，但絕不靜默放行——那等於這個 hook 不存在。
+  if command -v ruff >/dev/null 2>&1; then
+    ruff_bin=ruff
+  elif [ -x .venv/Scripts/ruff.exe ]; then
+    ruff_bin=.venv/Scripts/ruff.exe
+  elif [ -x .venv/bin/ruff ]; then
+    ruff_bin=.venv/bin/ruff
+  else
+    echo "pre-commit: 找不到 ruff。請啟動 venv，或執行 pip install -r requirements-dev.txt"
+    exit 1
+  fi
+
+  printf '%s\n' $py | xargs "$ruff_bin" check
+  printf '%s\n' $py | xargs "$ruff_bin" format --check
 fi
-
-printf '%s\n' $py | xargs "$ruff_bin" check
-printf '%s\n' $py | xargs "$ruff_bin" format --check
 
 if [ -n "$HORO_SKIP_TESTS" ]; then
   echo "pre-commit: 已依 HORO_SKIP_TESTS 略過測試。"
