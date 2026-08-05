@@ -47,6 +47,27 @@ async def test_poll_completion_persists_results_and_voters(db):
     assert count == 3
 
 
+async def test_poll_defaults_to_pending_so_a_missed_status_cannot_orphan(db):
+    """ORM 預設若是 active，任何漏傳 status 的新建立路徑都會直接產生孤兒紀錄。"""
+    from datetime import UTC, datetime
+
+    from src.database.models import Poll
+
+    async with db.session_factory() as session:
+        poll = Poll(
+            guild_id=1,
+            channel_id=10,
+            created_by=20,
+            question="沒傳 status",
+            answers=["甲", "乙"],
+            ends_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(poll)
+        await session.flush()
+
+        assert poll.status == "pending"
+
+
 async def test_unpublished_poll_is_invisible_until_its_message_exists(db):
     """Discord 發訊息失敗時投票停在 pending，背景結算不該把它當成正常活動。"""
     service = PollService(db)

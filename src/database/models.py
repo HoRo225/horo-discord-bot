@@ -96,7 +96,9 @@ class Giveaway(Base):
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ticket_price: Mapped[int] = mapped_column(BigInteger, default=0)
     per_user_limit: Mapped[int] = mapped_column(Integer, default=1)
-    status: Mapped[str] = mapped_column(String(20), default="active")
+    # 預設 pending 而非 active：活動要等 publish() 綁上 Discord 訊息才生效。
+    # 若預設是 active，任何漏傳 status 的新建立路徑都會直接產生孤兒紀錄。
+    status: Mapped[str] = mapped_column(String(20), default="pending")
     winners: Mapped[list[int]] = mapped_column(JSON, default=list)
     # 累積的歷史中獎者。只看 winners 的話，重抽第二次就會把第一次的中獎者
     # 放回候選池，同一個人可能在不同輪次重複中獎。
@@ -135,7 +137,8 @@ class Poll(Base):
     answers: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     multiple: Mapped[bool] = mapped_column(Boolean, default=False)
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="active")
+    # 同 Giveaway.status：預設 pending，publish() 成功才轉 active。
+    status: Mapped[str] = mapped_column(String(20), default="pending")
     results: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

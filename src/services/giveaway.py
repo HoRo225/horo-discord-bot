@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -261,7 +262,8 @@ class GiveawayService:
             if giveaway.last_reroll_at is not None:
                 elapsed = current - aware_utc(giveaway.last_reroll_at)
                 if elapsed < REROLL_COOLDOWN:
-                    remaining = int((REROLL_COOLDOWN - elapsed).total_seconds() // 60) + 1
+                    # 向上取整而非「整除再加一」：後者在剛好剩整數分鐘時會多報一分鐘。
+                    remaining = math.ceil((REROLL_COOLDOWN - elapsed).total_seconds() / 60)
                     raise ConflictError(strings.ERR_REROLL_COOLDOWN.format(minutes=remaining))
 
             old_winners = list(giveaway.winners)

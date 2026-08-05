@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from src.database.models import Giveaway
 from src.services.common import ConflictError
 from src.services.giveaway import (
     MAX_REROLLS,
@@ -134,6 +135,36 @@ async def test_reroll_stops_at_the_round_limit(db, economy):
 
     with pytest.raises(ConflictError):
         await service.reroll(giveaway.id, admin_user_id=99, now=datetime.now(UTC))
+
+
+async def test_giveaway_defaults_to_pending_so_a_missed_status_cannot_orphan(db):
+    """ORM 預設若是 active，任何漏傳 status 的新建立路徑都會直接產生孤兒紀錄。"""
+    async with db.session_factory() as session:
+        giveaway = Giveaway(
+            guild_id=1,
+            channel_id=100,
+            created_by=99,
+            prize="沒傳 status",
+            winner_count=1,
+            ends_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(giveaway)
+        await session.flush()
+
+        assert giveaway.status == "pending"
+
+
+async def test_reroll_cooldown_message_does_not_overstate_the_wait(db, economy):
+    """整除邊界：剛好剩 60 秒時不該報成 2 分鐘。"""
+    service = GiveawayService(db, economy)
+    giveaway = await _giveaway_with_entrants(service, economy, entrants=3)
+    first_at = datetime.now(UTC)
+    await service.reroll(giveaway.id, admin_user_id=99, now=first_at)
+
+    with pytest.raises(ConflictError, match="1 分鐘"):
+        await service.reroll(
+            giveaway.id, admin_user_id=99, now=first_at + REROLL_COOLDOWN - timedelta(seconds=60)
+        )
 
 
 async def test_reroll_is_rate_limited_by_a_cooldown(db, economy):
