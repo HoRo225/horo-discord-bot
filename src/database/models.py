@@ -98,6 +98,11 @@ class Giveaway(Base):
     per_user_limit: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(20), default="active")
     winners: Mapped[list[int]] = mapped_column(JSON, default=list)
+    # 累積的歷史中獎者。只看 winners 的話，重抽第二次就會把第一次的中獎者
+    # 放回候選池，同一個人可能在不同輪次重複中獎。
+    past_winners: Mapped[list[int]] = mapped_column(JSON, default=list)
+    reroll_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_reroll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

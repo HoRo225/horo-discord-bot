@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
+from src.config import PROJECT_ROOT
 from src.database.migrations import upgrade_database
+
+
+def _script_head() -> str:
+    """從 migration 檔本身推出 head，這樣新增 migration 不必回頭改測試。"""
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+    return ScriptDirectory.from_config(config).get_current_head()
 
 
 async def test_sqlite_pragmas_are_enabled(db):
@@ -36,7 +46,7 @@ async def test_alembic_upgrade_can_run_twice(tmp_path):
             row[1] for row in (await connection.execute(text("PRAGMA table_info(guild_settings)")))
         }
     await engine.dispose()
-    assert revision == "20260804_0002"
+    assert revision == _script_head()
     assert {"wallets", "giveaways", "polls", "blackjack_games", "ai_usage"} <= tables
     # 歡迎功能已整檔移除，guild_settings 不應再殘留這些欄位。
     assert "welcome_channel_id" not in guild_settings_columns

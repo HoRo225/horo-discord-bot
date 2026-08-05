@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,11 @@ from src.database.engine import Database
 from src.database.models import AdminAudit, Giveaway, GiveawayEntry
 from src.services.common import ConflictError, NotFoundError, ValidationError, aware_utc
 from src.services.economy import EconomyService
+
+# 累積排除歷史中獎者後，候選池單調遞減，三輪後實質等同重開一場抽獎。
+MAX_REROLLS = 3
+# 冷卻擋的是管理員連點造成的重複公告，時間足夠確認上一輪結果即可。
+REROLL_COOLDOWN = timedelta(minutes=10)
 
 
 def weighted_sample_without_replacement(
@@ -243,25 +248,44 @@ class GiveawayService:
         *,
         admin_user_id: int,
         rng: random.Random | random.SystemRandom | None = None,
+        now: datetime | None = None,
     ) -> Giveaway:
+        current = aware_utc(now or datetime.now(UTC))
+
         async def operation(session: AsyncSession) -> Giveaway:
             giveaway = await session.get(Giveaway, giveaway_id)
             if giveaway is None or giveaway.status != "completed":
                 raise NotFoundError(strings.ERR_COMPLETED_GIVEAWAY_NOT_FOUND)
+            if giveaway.reroll_count >= MAX_REROLLS:
+                raise ConflictError(strings.ERR_REROLL_LIMIT.format(limit=MAX_REROLLS))
+            if giveaway.last_reroll_at is not None:
+                elapsed = current - aware_utc(giveaway.last_reroll_at)
+                if elapsed < REROLL_COOLDOWN:
+                    remaining = int((REROLL_COOLDOWN - elapsed).total_seconds() // 60) + 1
+                    raise ConflictError(strings.ERR_REROLL_COOLDOWN.format(minutes=remaining))
+
             old_winners = list(giveaway.winners)
+            # 排除所有輪次的中獎者，而不只是上一輪，否則多輪重抽後同一個人
+            # 會被放回候選池而重複中獎。
+            excluded = set(giveaway.past_winners) | set(old_winners)
             entries = list(
                 await session.scalars(
                     select(GiveawayEntry).where(GiveawayEntry.giveaway_id == giveaway_id)
                 )
             )
             eligible = [
-                (entry.user_id, entry.weight)
-                for entry in entries
-                if entry.user_id not in old_winners
+                (entry.user_id, entry.weight) for entry in entries if entry.user_id not in excluded
             ]
-            giveaway.winners = weighted_sample_without_replacement(
-                eligible, giveaway.winner_count, rng=rng
-            )
+            winners = weighted_sample_without_replacement(eligible, giveaway.winner_count, rng=rng)
+            if not winners:
+                # 候選耗盡時不要把 winners 洗成空的——那會連原本的中獎者一起抹掉。
+                # 這次不算一次重抽，也不寫入冷卻。
+                raise ConflictError(strings.ERR_NO_REROLL_CANDIDATE)
+
+            giveaway.winners = winners
+            giveaway.past_winners = sorted(excluded)
+            giveaway.reroll_count += 1
+            giveaway.last_reroll_at = current
             session.add(
                 AdminAudit(
                     guild_id=giveaway.guild_id,
@@ -271,6 +295,7 @@ class GiveawayService:
                         "giveaway_id": giveaway.id,
                         "old_winners": old_winners,
                         "new_winners": giveaway.winners,
+                        "reroll_count": giveaway.reroll_count,
                     },
                 )
             )

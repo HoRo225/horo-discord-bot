@@ -3,7 +3,15 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime, timedelta
 
-from src.services.giveaway import GiveawayService, weighted_sample_without_replacement
+import pytest
+
+from src.services.common import ConflictError
+from src.services.giveaway import (
+    MAX_REROLLS,
+    REROLL_COOLDOWN,
+    GiveawayService,
+    weighted_sample_without_replacement,
+)
 
 
 def test_weighted_sample_is_unique_and_respects_zero_weight():
@@ -69,6 +77,96 @@ async def test_finalize_without_entries_has_empty_winners(db, economy):
     result = await service.finalize(giveaway.id)
     assert result.status == "completed"
     assert result.winners == []
+
+
+async def _giveaway_with_entrants(service, economy, *, entrants: int):
+    """建一場已結束的免費抽獎，並讓指定人數參加。"""
+    giveaway = await service.create(
+        guild_id=1,
+        channel_id=100,
+        created_by=99,
+        prize="重抽測試",
+        winner_count=1,
+        ends_at=datetime.now(UTC) + timedelta(hours=1),
+        ticket_price=0,
+        per_user_limit=1,
+    )
+    await service.publish(giveaway.id, message_id=3000 + giveaway.id)
+    for index in range(entrants):
+        await service.enter(
+            giveaway_id=giveaway.id,
+            guild_id=1,
+            user_id=100 + index,
+            quantity=1,
+            idempotency_key=f"join-{index}",
+        )
+    return await service.finalize(giveaway.id)
+
+
+async def test_reroll_never_picks_a_winner_from_an_earlier_round(db, economy):
+    """只排除上一輪的話，第二次重抽會把第一次的中獎者放回候選池。"""
+    service = GiveawayService(db, economy)
+    giveaway = await _giveaway_with_entrants(service, economy, entrants=3)
+    seen = set(giveaway.winners)
+    long_ago = datetime.now(UTC) - REROLL_COOLDOWN * 10
+
+    for round_index in range(2):
+        result = await service.reroll(
+            giveaway.id,
+            admin_user_id=99,
+            now=long_ago + timedelta(hours=round_index),
+        )
+        assert not (set(result.winners) & seen), "重抽選到了先前輪次的中獎者"
+        seen |= set(result.winners)
+
+    assert len(seen) == 3
+
+
+async def test_reroll_stops_at_the_round_limit(db, economy):
+    service = GiveawayService(db, economy)
+    giveaway = await _giveaway_with_entrants(service, economy, entrants=MAX_REROLLS + 2)
+    long_ago = datetime.now(UTC) - REROLL_COOLDOWN * 100
+
+    for round_index in range(MAX_REROLLS):
+        await service.reroll(
+            giveaway.id, admin_user_id=99, now=long_ago + timedelta(hours=round_index)
+        )
+
+    with pytest.raises(ConflictError):
+        await service.reroll(giveaway.id, admin_user_id=99, now=datetime.now(UTC))
+
+
+async def test_reroll_is_rate_limited_by_a_cooldown(db, economy):
+    service = GiveawayService(db, economy)
+    giveaway = await _giveaway_with_entrants(service, economy, entrants=3)
+    first_at = datetime.now(UTC)
+
+    await service.reroll(giveaway.id, admin_user_id=99, now=first_at)
+
+    with pytest.raises(ConflictError):
+        await service.reroll(
+            giveaway.id, admin_user_id=99, now=first_at + REROLL_COOLDOWN - timedelta(seconds=1)
+        )
+    # 冷卻過後就放行。
+    await service.reroll(
+        giveaway.id, admin_user_id=99, now=first_at + REROLL_COOLDOWN + timedelta(seconds=1)
+    )
+
+
+async def test_reroll_without_candidates_keeps_the_existing_winners(db, economy):
+    """候選耗盡時不該把 winners 洗成空的，那會連原本的中獎者一起抹掉。"""
+    service = GiveawayService(db, economy)
+    giveaway = await _giveaway_with_entrants(service, economy, entrants=1)
+    original = list(giveaway.winners)
+    assert original
+
+    with pytest.raises(ConflictError):
+        await service.reroll(giveaway.id, admin_user_id=99)
+
+    listed = await service.completed(1)
+    assert listed[0].winners == original
+    assert listed[0].reroll_count == 0
+    assert listed[0].last_reroll_at is None
 
 
 async def test_replayed_entry_with_a_bigger_quantity_is_not_judged_against_the_limit(db, economy):
@@ -157,6 +255,8 @@ async def test_completed_lists_only_finalized_giveaways(db, economy):
 
     assert [item.id for item in listed] == [already_ended]
     assert still_running not in [item.id for item in listed]
-    # 每一個列出的項目都必須能通過 reroll() 的狀態檢查
+    # 每一項都必須通過 reroll() 的狀態檢查。這場沒有參加者，所以會因為沒有
+    # 候選人而擋下，但關鍵是不能因為狀態不符而被判定成「找不到」。
     for item in listed:
-        await service.reroll(item.id, admin_user_id=99)
+        with pytest.raises(ConflictError):
+            await service.reroll(item.id, admin_user_id=99)
