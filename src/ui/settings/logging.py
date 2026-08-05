@@ -12,54 +12,41 @@ from typing import TYPE_CHECKING, Any
 import discord
 
 from src import strings
-from src.database.models import GuildSettings
-from src.ui.base import POSTABLE_CHANNEL_TYPES, Panel, button, panel_action, swap_panel
-from src.ui.common import is_admin
-from src.ui.settings.nav import NAV_LOG_TOGGLES, nav_row
-from src.ui.settings.shared import SettingsModal, _defaults, _first
-from src.ui.status import Notice, StatusKind
+from src.ui.base import POSTABLE_CHANNEL_TYPES, button
+from src.ui.settings.nav import NAV_LOG
+from src.ui.settings.shared import SettingsPage, _defaults, _first, _mention, apply_setting
+from src.ui.status import Notice, badge
 
 if TYPE_CHECKING:
     from src.bot import HoRoBot
 
 
-class LogSettingsModal(SettingsModal):
-    action = "settings_log"
-
-    def __init__(self, bot: HoRoBot, settings: GuildSettings) -> None:
-        super().__init__(
-            bot,
-            settings,
-            title=strings.SETTINGS_LOG,
-            custom_id="cs:settings:log:modal",
-        )
-        self.log_channel = discord.ui.ChannelSelect(
-            channel_types=list(POSTABLE_CHANNEL_TYPES),
-            required=False,
-            default_values=_defaults([settings.log_channel_id] if settings.log_channel_id else []),
-        )
-        self.add_item(discord.ui.Label(text=strings.LOG_CHANNEL_ID, component=self.log_channel))
-
-    def values(self) -> dict[str, Any]:
-        return {"log_channel_id": _first(self.log_channel)}
-
-
-async def log_toggle_panel(
+async def log_page(
     bot: HoRoBot, interaction: discord.Interaction, *, notice: str | Notice | None = None
-) -> LogTogglePanel:
+) -> LogPage:
     settings = await bot.settings_service.get(interaction.guild_id)
-    return LogTogglePanel(bot, settings, notice=notice)
+    return LogPage(bot, settings, notice=notice)
 
 
-class LogTogglePanel(Panel):
-    title = f"# 📜 {strings.SETTINGS_LOG_TOGGLES}"
-    accent = discord.Colour.from_rgb(180, 150, 255)
-
-    def __init__(self, bot: HoRoBot, settings: GuildSettings, **kwargs: Any) -> None:
-        self.settings = settings
-        super().__init__(bot, **kwargs)
+class LogPage(SettingsPage):
+    title = f"# 📜 {strings.SETTINGS_LOG}"
+    body = strings.SETTINGS_LOG_BODY
+    nav_key = NAV_LOG
 
     def rows(self) -> Iterable[discord.ui.Item[Any]]:
+        current = self.settings
+        # 現況一段獨立的 TextDisplay：badge 直接反映 shared.module_statuses() 對
+        # log 的判定（有頻道即 OK），文字則用既有的 LOG_CHANNEL + _mention 組出，
+        # 未設定時 _mention 自己會退回「未設定」。
+        yield discord.ui.TextDisplay(
+            badge(
+                self.statuses["log"],
+                f"{strings.LOG_CHANNEL}：{_mention(current.log_channel_id)}",
+            )
+        )
+        yield discord.ui.ActionRow(self._channel_select())
+        # 分隔線標記性質切換：上半是選頻道，下半是開關事件，避免糊成同一區。
+        yield discord.ui.Separator()
         yield discord.ui.ActionRow(
             self._toggle(
                 strings.SETTINGS_LOG_MEMBERS, "log_member_events", "cs:settings:log:members"
@@ -68,8 +55,32 @@ class LogTogglePanel(Panel):
                 strings.SETTINGS_LOG_MESSAGES, "log_message_events", "cs:settings:log:messages"
             ),
         )
-        # 導覽取代了原本的返回鈕：回主面板與跳去模型清單現在都是同一次點選。
-        yield nav_row(self.bot, NAV_LOG_TOGGLES)
+
+    def _channel_select(self) -> discord.ui.ChannelSelect:
+        current = self.settings
+        select = discord.ui.ChannelSelect(
+            custom_id="cs:settings:log:channel",
+            channel_types=list(POSTABLE_CHANNEL_TYPES),
+            # min_values=0 不可省：日誌頻道要能「清空即停用」，選單預設的
+            # min_values=1 會讓使用者永遠無法把已選的頻道拿掉。
+            min_values=0,
+            max_values=1,
+            placeholder=strings.LOG_CHANNEL_PLACEHOLDER,
+            default_values=_defaults([current.log_channel_id] if current.log_channel_id else []),
+        )
+
+        async def callback(interaction: discord.Interaction) -> None:
+            # 選完就存，選單重畫後 default_values 就是答案，不必再補通知。
+            await apply_setting(
+                self.bot,
+                interaction,
+                origin=NAV_LOG,
+                action="settings_log_channel",
+                values={"log_channel_id": _first(select)},
+            )
+
+        select.callback = callback
+        return select
 
     def _toggle(self, label: str, field: str, custom_id: str) -> discord.ui.Button:
         enabled = bool(getattr(self.settings, field))
@@ -86,24 +97,11 @@ class LogTogglePanel(Panel):
         )
 
     async def _flip(self, interaction: discord.Interaction, field: str) -> None:
-        async with panel_action(
-            interaction, lambda notice: log_toggle_panel(self.bot, interaction, notice=notice)
-        ):
-            if not is_admin(interaction):
-                await swap_panel(
-                    interaction,
-                    await log_toggle_panel(
-                        self.bot,
-                        interaction,
-                        notice=Notice(strings.ADMIN_ONLY, StatusKind.ERROR),
-                    ),
-                )
-                return
-            await self.bot.settings_service.update(
-                interaction.guild_id,
-                interaction.user.id,
-                action="settings_log_toggle",
-                values={field: not getattr(self.settings, field)},
-            )
-            # 開關的新狀態已經寫在按鈕文字上，再補一句「設定已儲存」只是噪音。
-            await swap_panel(interaction, await log_toggle_panel(self.bot, interaction))
+        # 新狀態已經寫在按鈕文字上，再補一句「設定已儲存」只是噪音，因此不傳 notice。
+        await apply_setting(
+            self.bot,
+            interaction,
+            origin=NAV_LOG,
+            action="settings_log_toggle",
+            values={field: not getattr(self.settings, field)},
+        )

@@ -76,24 +76,6 @@ class AdminCog(commands.Cog):
         except Exception as exc:
             await handle_interaction_error(interaction, exc)
 
-    @app_commands.command(name="help", description=strings.CMD_HELP_DESC)
-    async def help(self, interaction: discord.Interaction) -> None:
-        view = discord.ui.LayoutView(timeout=300)
-        view.add_item(
-            discord.ui.Container(
-                discord.ui.TextDisplay(strings.HELP_TEXT),
-                accent_colour=discord.Colour.from_rgb(121, 196, 255),
-            )
-        )
-        await send_ephemeral(interaction, view=view)
-
-    @app_commands.command(name="ping", description=strings.CMD_PING_DESC)
-    async def ping(self, interaction: discord.Interaction) -> None:
-        await send_ephemeral(
-            interaction,
-            strings.PING.format(latency_ms=round(self.bot.latency * 1_000)),
-        )
-
 
 async def setup(bot: HoRoBot) -> None:
     await bot.add_cog(AdminCog(bot))

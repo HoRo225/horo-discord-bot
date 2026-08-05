@@ -19,6 +19,6 @@ def test_persistent_views_have_stable_custom_ids():
         assert len(custom_ids) == len(set(custom_ids))
 
 
-def test_only_four_documented_slash_commands_exist():
+def test_only_two_documented_slash_commands_exist():
     names = {command.name for command in AdminCog.__cog_app_commands__}
-    assert names == {"setup", "settings", "help", "ping"}
+    assert names == {"setup", "settings"}

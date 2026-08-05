@@ -9,11 +9,8 @@ NOT_FOUND = "找不到指定資料，可能已結束或被移除。"
 CURRENT_CHANNEL_NOT_FOUND = "找不到目前頻道。"
 ACTIVITY_MESSAGE_NOT_FOUND = "找不到活動訊息。"
 SUCCESS = "設定已儲存。"
-PING = "🏓 Pong！延遲 `{latency_ms} ms`"
 CMD_SETUP_DESC = "部署或更新常駐功能儀表板"
 CMD_SETTINGS_DESC = "開啟伺服器設定面板"
-CMD_HELP_DESC = "顯示使用說明"
-CMD_PING_DESC = "檢查 Bot 延遲"
 
 # 狀態徽章：面板統一用這四個符號表達「成功／未設定／需注意／失敗」，語意見 ui.status
 STATUS_BADGE_OK = "✅"
@@ -37,6 +34,7 @@ SETTINGS_ECONOMY = "經濟與 21 點"
 SETTINGS_POLL = "投票權限"
 SETTINGS_AI = "AI 聊天"
 SETTINGS_MODEL = "選擇 AI 模型"
+SETTINGS_AI_QUOTA = "編輯配額"
 PREVIOUS_PAGE = "上一頁"
 NEXT_PAGE = "下一頁"
 NAV_BACK = "返回"
@@ -45,24 +43,47 @@ PAGE_INDICATOR = "第 {page} / {total} 頁"
 NAV_SETTINGS_PLACEHOLDER = "切換設定頁"
 NAV_CURRENT_MARK = "✓"
 NAV_SETTINGS_HOME = "設定總覽"
-NAV_SETTINGS_HOME_DESC = "查看四大模組狀態，並開啟各自的編輯視窗"
-NAV_LOG_TOGGLES_DESC = "開關成員進出與訊息刪改的日誌記錄"
-NAV_MODEL_DESC = "從可用清單直接挑選 AI 模型"
+NAV_SETTINGS_HOME_DESC = "一次看完四個模組目前的狀態"
+NAV_LOG_DESC = "指定日誌頻道，並開關要記錄的事件"
+NAV_ECONOMY_DESC = "貨幣名稱、每日簽到與 21 點下注上下限"
+NAV_POLL_DESC = "指定可以建立投票的身分組"
+NAV_AI_DESC = "AI 的觸發範圍、模型與每日配額"
+
+# 各設定頁頂端的說明文字。Discord 的 subtext 語法（行首 `-# ` 的灰色小字）直接寫進常數值：
+# 前綴是這段文字外觀的一部分，寫在這裡各頁就只要 `body = strings.X`，
+# 不必在五個頁面模組裡各拼一次字串，也不會有人漏拼或拼成不同樣子。
+SETTINGS_HOME_BODY = "-# 從下方選單切換到各模組進行設定。"
+SETTINGS_LOG_BODY = "-# 選好頻道立即生效；清空選擇即停用日誌。"
+SETTINGS_ECONOMY_BODY = "-# 這幾項是數字與名稱，需要用編輯視窗輸入。"
+SETTINGS_POLL_BODY = "-# 留空代表只有具備「管理伺服器」權限的人能建立投票。"
+SETTINGS_AI_BODY = (
+    "-# AI 僅在白名單頻道中，於提及 Bot 或回覆 Bot 時觸發；頻道與身分組都要設定才會生效。"
+)
 
 SETTINGS_LOG_TOGGLES = "日誌事件開關"
 SETTINGS_LOG_MEMBERS = "成員事件"
 SETTINGS_LOG_MESSAGES = "訊息事件"
-LOG_CHANNEL_ID = "日誌頻道 ID（留空停用）"
+LOG_CHANNEL = "日誌頻道"
 CURRENCY_NAME = "貨幣名稱"
 DAILY_AMOUNT = "每日簽到金額"
 BLACKJACK_MIN_BET = "21 點最低下注"
 BLACKJACK_MAX_BET = "21 點最高下注"
-POLL_ROLE_IDS = "可建立投票的身分組 ID（逗號分隔）"
-AI_CHANNEL_IDS = "AI 白名單頻道 ID（逗號分隔）"
-AI_ROLE_IDS = "AI 允許身分組 ID（逗號分隔）"
-AI_MODEL = "AI 模型（可留空使用全域預設）"
+POLL_ROLES = "可建立投票的身分組"
+AI_CHANNELS = "白名單頻道"
+AI_ROLES = "允許的身分組"
+AI_MODEL = "AI 模型"
 AI_GUILD_QUOTA = "伺服器每日 AI 配額"
 AI_USER_QUOTA = "每位使用者每日 AI 配額"
+# AI 頁摘要第三行的短版標籤：AI_GUILD_QUOTA／AI_USER_QUOTA 留給 AIQuotaModal 的欄位標籤，
+# 兩者情境不同（欄位標籤要精確、摘要行要精簡），因此各自成一份常數，不共用。
+AI_QUOTA_LINE = "每日配額：伺服器 **{guild}**｜每人 **{user}**"
+
+# 各頁選擇器的提示文字（收合時顯示在空選擇器上）
+LOG_CHANNEL_PLACEHOLDER = "選擇要接收日誌的頻道"
+POLL_ROLES_PLACEHOLDER = "選擇可以建立投票的身分組"
+AI_CHANNELS_PLACEHOLDER = "選擇 AI 可以回應的頻道"
+AI_ROLES_PLACEHOLDER = "選擇可以使用 AI 的身分組"
+AI_MODEL_PLACEHOLDER = "選擇要使用的模型"
 
 # 經濟／抽獎商店／投票／21 點功能文字
 ECONOMY_TITLE = "# 💎 經濟中心"
@@ -197,15 +218,15 @@ EVENT_MESSAGE_EDITED = "✏️ {author} 在 {channel} 編輯訊息：\n**原文�
 EVENT_CONTENT_UNCACHED = "（內容不在快取中）"
 EVENT_NO_TEXT = "（無文字）"
 
-# 設定摘要文字（面板首頁卡片用）
+# 設定總覽頁的四行摘要：一行一模組，前面由 ui.status.badge() 補狀態徽章。
+# 清單一律只寫數量、不展開 mention：25 個頻道加 25 個身分組的 mention 約 1000 字元，
+# 四行就足以吃掉容器的字元上限；而且四行長度相近才對得齊，一眼掃得出哪個模組沒設。
 SETTING_NOT_CONFIGURED = "未設定"
 SETTINGS_EDIT = "編輯"
-SETTINGS_LOG_SUMMARY = "**{title}**\n日誌：{log}"
-SETTINGS_ECONOMY_SUMMARY = (
-    "**{title}**\n貨幣：**{currency}**｜簽到：**{daily}**｜21 點：**{minimum}–{maximum}**"
-)
-SETTINGS_POLL_SUMMARY = "**{title}**\n可建立投票的身分組：{roles}"
-SETTINGS_AI_SUMMARY = "**{title}**\n模型：**{model}**\n頻道：{channels}｜身分組：{roles}"
+SETTINGS_LOG_LINE = "**{title}**：{channel}・成員 {members}・訊息 {messages}"
+SETTINGS_ECONOMY_LINE = "**{title}**：{currency}・簽到 **{daily}**・下注 **{minimum}–{maximum}**"
+SETTINGS_POLL_LINE = "**{title}**：身分組 {roles}"
+SETTINGS_AI_LINE = "**{title}**：模型 **{model}**・頻道 {channels}・身分組 {roles}"
 TOGGLE_ON = "開"
 TOGGLE_OFF = "關"
 
@@ -262,11 +283,3 @@ ERR_BET_ALREADY_HANDLED = "這次下注已處理"
 ERR_GAME_ACTION_PHASE = "目前不能執行牌局動作"
 ERR_GAME_ACTION = "目前不能執行這個動作"
 ERR_UNKNOWN_GAME_ACTION = "未知的牌局動作"
-
-HELP_TEXT = """# HoRo 使用說明
-`/setup`：部署或更新常駐儀表板（管理員）
-`/settings`：開啟伺服器設定（管理員）
-`/help`：顯示此說明
-`/ping`：檢查 Bot 延遲
-
-日常功能請從常駐儀表板操作。AI 僅在白名單頻道中，於提及 Bot 或回覆 Bot 時觸發。"""

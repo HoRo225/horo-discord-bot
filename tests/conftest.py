@@ -39,6 +39,18 @@ def _button(view, custom_id):
     return next((item for item in _buttons(view) if item.custom_id == custom_id), None)
 
 
+def _select(view, custom_id):
+    """依 custom_id 定位單一選擇器（Select/ChannelSelect/RoleSelect 皆可），找不到回傳 None。
+
+    三種選擇器共同的基底類別（BaseSelect）未對外公開，因此改用 custom_id 這個
+    所有元件都有的屬性來過濾，不必分別 isinstance 三次。
+    """
+    return next(
+        (item for item in view.walk_children() if getattr(item, "custom_id", None) == custom_id),
+        None,
+    )
+
+
 def _kinds(view):
     return [type(item).__name__ for item in view.walk_children()]
 
@@ -60,3 +72,27 @@ def _container(view):
 def fake_bot(**over):
     """最小可用的假 bot：預設帶 settings.ai_default_model，符合 panel._model_name 的期待。"""
     return SimpleNamespace(settings=SimpleNamespace(ai_default_model=""), **over)
+
+
+def guild_settings(**overrides):
+    """組出 settings 五個頁面讀得到的那些 GuildSettings 欄位，其餘留給資料庫。
+
+    原本是 test_ui_settings.py 自帶的 `_guild_settings()`，搬來這裡讓五個頁面的
+    測試共用；AI 頁另外會讀 ai_daily_guild_quota / ai_daily_user_quota，一併補上。
+    """
+    base = {
+        "log_channel_id": None,
+        "log_member_events": True,
+        "log_message_events": True,
+        "currency_name": "水晶",
+        "daily_amount": 100,
+        "blackjack_min_bet": 10,
+        "blackjack_max_bet": 10_000,
+        "poll_creator_role_ids": [],
+        "ai_channel_ids": [],
+        "ai_role_ids": [],
+        "ai_model": None,
+        "ai_daily_guild_quota": 500,
+        "ai_daily_user_quota": 50,
+    }
+    return SimpleNamespace(**{**base, **overrides})

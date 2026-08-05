@@ -35,8 +35,6 @@ async def test_all_cogs_load_and_only_documented_commands_are_registered(tmp_pat
         assert {command.name for command in bot.tree.get_commands()} == {
             "setup",
             "settings",
-            "help",
-            "ping",
         }
     finally:
         for extension in reversed(COG_EXTENSIONS):
