@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from sqlalchemy.engine import make_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,6 +17,25 @@ HEARTBEAT_PATH = Path("/tmp/horo-heartbeat")  # noqa: S108
 HEARTBEAT_INTERVAL_SECONDS = 15
 # 容許漏掉三拍再判定為不健康，避免偶發的排程延遲造成誤殺。
 HEARTBEAT_MAX_AGE_SECONDS = 60
+
+
+def _require_aiosqlite(database_url: str) -> None:
+    """只接受 sqlite+aiosqlite。
+
+    比對整個 drivername 而不是 `startswith("sqlite")`：後者會放行 `sqlite:///`
+    這種同步 driver，config 這關過了、要到 create_async_engine 或 scripts/backup.py
+    才炸，而那時的錯誤訊息完全看不出真正的原因。
+    """
+    try:
+        drivername = make_url(database_url).drivername
+    except Exception as exc:
+        raise ValueError(f"DATABASE_URL 無法解析：{exc}") from exc
+    if drivername != "sqlite+aiosqlite":
+        raise ValueError(
+            f"DATABASE_URL 只接受 sqlite+aiosqlite（目前是 {drivername}）。本專案的"
+            "冪等、配額與上限檢查都是先讀後寫，正確性依賴 SQLite BEGIN IMMEDIATE "
+            "的寫入序列化；換成其他後端會靜默失去這些保證，必須先補上 row-level locking。"
+        )
 
 
 def _optional_int(name: str) -> int | None:
@@ -76,12 +96,7 @@ class Settings:
         database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/horo.db").strip()
         if not database_url:
             raise ValueError("DATABASE_URL 不可為空")
-        if not database_url.startswith("sqlite"):
-            raise ValueError(
-                "DATABASE_URL 只接受 SQLite。本專案的冪等、配額與上限檢查都是"
-                "先讀後寫，正確性依賴 SQLite BEGIN IMMEDIATE 的寫入序列化；"
-                "換成其他後端會靜默失去這些保證，必須先補上 row-level locking。"
-            )
+        _require_aiosqlite(database_url)
 
         return cls(
             discord_token=token,

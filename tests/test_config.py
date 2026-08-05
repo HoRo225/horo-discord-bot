@@ -7,12 +7,22 @@ import pytest
 from src.config import PROJECT_ROOT, Settings
 
 
-def test_non_sqlite_database_url_is_rejected(monkeypatch):
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql+asyncpg://user:pw@localhost/horo",
+        # 同步 driver：startswith("sqlite") 會放行，但 create_async_engine 與
+        # scripts/backup.py 都只吃 aiosqlite。
+        "sqlite:///./data/horo.db",
+        "sqlite+pysqlite:///./data/horo.db",
+    ],
+)
+def test_database_urls_other_than_aiosqlite_are_rejected(monkeypatch, url):
     """錨定 SQLite：換成其他後端不會報錯只會靜默失去併發保證，所以要在入口擋掉。"""
     monkeypatch.setenv("DISCORD_TOKEN", "test-token")
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@localhost/horo")
+    monkeypatch.setenv("DATABASE_URL", url)
 
-    with pytest.raises(ValueError, match="SQLite"):
+    with pytest.raises(ValueError, match="sqlite"):
         Settings.from_env()
 
 
