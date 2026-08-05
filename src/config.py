@@ -19,23 +19,26 @@ HEARTBEAT_INTERVAL_SECONDS = 15
 HEARTBEAT_MAX_AGE_SECONDS = 60
 
 
-def _require_aiosqlite(database_url: str) -> None:
-    """只接受 sqlite+aiosqlite。
+def validate_database_url(database_url: str) -> None:
+    """強制使用一般檔案型的 sqlite+aiosqlite URL。
 
-    比對整個 drivername 而不是 `startswith("sqlite")`：後者會放行 `sqlite:///`
-    這種同步 driver，config 這關過了、要到 create_async_engine 或 scripts/backup.py
-    才炸，而那時的錯誤訊息完全看不出真正的原因。
+    本專案的 Alembic migration、Bot runtime 與 healthcheck 都會各自建立 engine；
+    `:memory:` 因此會變成彼此不同的資料庫，migration 成功後 runtime 仍是空 schema。
+    `file:` URI 也刻意不開放，避免 shared-memory/URI mode 繞過這個 file-backed contract。
     """
     try:
-        drivername = make_url(database_url).drivername
+        url = make_url(database_url)
     except Exception as exc:
         raise ValueError(f"DATABASE_URL 無法解析：{exc}") from exc
-    if drivername != "sqlite+aiosqlite":
+    if url.drivername != "sqlite+aiosqlite":
         raise ValueError(
-            f"DATABASE_URL 只接受 sqlite+aiosqlite（目前是 {drivername}）。本專案的"
+            f"DATABASE_URL 只接受 sqlite+aiosqlite（目前是 {url.drivername}）。本專案的"
             "冪等、配額與上限檢查都是先讀後寫，正確性依賴 SQLite BEGIN IMMEDIATE "
             "的寫入序列化；換成其他後端會靜默失去這些保證，必須先補上 row-level locking。"
         )
+    database = url.database or ""
+    if database == ":memory:" or database.startswith("file:") or not database:
+        raise ValueError("DATABASE_URL 必須指向一般檔案型 SQLite，不接受 :memory: 或 file: URI")
 
 
 def _optional_int(name: str) -> int | None:
@@ -96,7 +99,7 @@ class Settings:
         database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/horo.db").strip()
         if not database_url:
             raise ValueError("DATABASE_URL 不可為空")
-        _require_aiosqlite(database_url)
+        validate_database_url(database_url)
 
         return cls(
             discord_token=token,
