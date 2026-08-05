@@ -15,10 +15,15 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# 過期 pending 的保留期是 24 小時，用 30 秒的結算週期去掃等於每天多 2880 次
+# 寫入交易，而且那是個吃不到索引的全表掃描。每 120 個 tick（約一小時）跑一次就夠。
+STALE_SWEEP_EVERY_TICKS = 120
+
 
 class GiveawayCog(commands.Cog):
     def __init__(self, bot: HoRoBot) -> None:
         self.bot = bot
+        self._ticks = 0
 
     async def cog_load(self) -> None:
         self.finish_due.start()
@@ -31,13 +36,10 @@ class GiveawayCog(commands.Cog):
         # 掃描本身也可能失敗；若例外逃出 tasks.loop，整個背景結算工作可能停止，
         # 但 gateway heartbeat 仍會繼續，healthcheck 看不出抽獎已不再結算。
         try:
-            cancelled = await self.bot.giveaways.cancel_stale_pending()
-            if cancelled:
-                log.info("已取消 %s 筆過期 pending 抽獎", cancelled)
             pending_items = await self.bot.giveaways.due()
         except Exception:
             log.exception("抽獎到期掃描失敗")
-            return
+            pending_items = []
 
         for pending in pending_items:
             try:
@@ -72,6 +74,25 @@ class GiveawayCog(commands.Cog):
                     "抽獎到期處理失敗",
                     extra={"guild_id": pending.guild_id, "giveaway_id": pending.id},
                 )
+
+        await self._sweep_stale_pending()
+
+    async def _sweep_stale_pending(self) -> None:
+        """清理過期 pending。
+
+        刻意排在結算之後、用自己的 try 包起來：這是寫入交易，SQLite 只允許單一
+        writer，遇到 database is locked 就會失敗。它是可有可無的維護工作，不該有
+        能力擋掉真正重要的結算。
+        """
+        self._ticks += 1
+        if self._ticks % STALE_SWEEP_EVERY_TICKS:
+            return
+        try:
+            cancelled = await self.bot.giveaways.cancel_stale_pending()
+            if cancelled:
+                log.info("已取消 %s 筆過期 pending 抽獎", cancelled)
+        except Exception:
+            log.exception("清理過期 pending 抽獎失敗")
 
     @finish_due.before_loop
     async def before_finish_due(self) -> None:

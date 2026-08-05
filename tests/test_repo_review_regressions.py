@@ -126,6 +126,41 @@ async def test_stale_pending_giveaway_is_cancelled(db, economy):
         assert (await session.get(Giveaway, giveaway.id)).status == "cancelled"
 
 
+async def test_fresh_pending_giveaway_survives_the_sweep(db, economy):
+    """核心保證：清理不得誤殺正在發布中的紀錄。
+
+    create() 與 publish() 之間的窗口通常不到一秒，遠小於 24 小時的保留期；
+    這則測試把該保證釘住，避免日後有人把閾值調小。
+    """
+    service = GiveawayService(db, economy)
+    now = datetime.now(UTC)
+    giveaway = await service.create(
+        guild_id=1,
+        channel_id=10,
+        created_by=99,
+        prize="剛建立",
+        winner_count=1,
+        ends_at=now + timedelta(hours=1),
+        ticket_price=0,
+        per_user_limit=1,
+    )
+
+    assert await service.cancel_stale_pending(now=now) == 0
+    async with db.session_factory() as session:
+        assert (await session.get(Giveaway, giveaway.id)).status == "pending"
+
+    # 已 publish 的活動就算超過保留期也不該被碰。
+    await service.publish(giveaway.id, message_id=777)
+    async with db.session_factory() as session:
+        row = await session.get(Giveaway, giveaway.id)
+        row.created_at = now - timedelta(days=30)
+        await session.commit()
+
+    assert await service.cancel_stale_pending(now=now) == 0
+    async with db.session_factory() as session:
+        assert (await session.get(Giveaway, giveaway.id)).status == "active"
+
+
 async def test_stale_pending_poll_is_cancelled(db):
     service = PollService(db)
     now = datetime.now(UTC)
@@ -296,3 +331,58 @@ async def test_blackjack_attach_cancellation_refunds_and_withdraws_message():
 
     assert blackjack.refunded is True
     assert message.deleted is True
+
+
+class FlakyCleanupGiveaways:
+    """清理會炸、結算正常——用來釘住「維護工作不得擋掉結算」。"""
+
+    def __init__(self) -> None:
+        self.finalized: list[int] = []
+        self.sweep_attempts = 0
+
+    async def cancel_stale_pending(self, now=None):
+        self.sweep_attempts += 1
+        raise RuntimeError("database is locked")
+
+    async def due(self, now=None):
+        return [SimpleNamespace(id=1, guild_id=1, channel_id=10)]
+
+    async def finalize(self, giveaway_id):
+        self.finalized.append(giveaway_id)
+        raise RuntimeError("停在這裡就好，本測試只在意 finalize 有沒有被呼叫")
+
+
+async def test_cleanup_failure_cannot_block_giveaway_settlement():
+    from src.cogs import giveaway as giveaway_cog
+
+    service = FlakyCleanupGiveaways()
+    cog = giveaway_cog.GiveawayCog(SimpleNamespace(giveaways=service))
+    # 讓這一 tick 剛好輪到清理，確保它真的被呼叫到而不是被降頻跳過。
+    cog._ticks = giveaway_cog.STALE_SWEEP_EVERY_TICKS - 1
+
+    await cog.finish_due()
+
+    assert service.finalized == [1], "清理失敗時結算被跳過了"
+    assert service.sweep_attempts == 1
+
+
+async def test_due_scan_failure_still_runs_cleanup_and_keeps_loop_alive():
+    """掃描失敗不該讓例外逃出 tasks.loop，否則整個背景結算會靜默停擺。"""
+    from src.cogs import poll as poll_cog
+
+    swept = []
+
+    class BrokenScanPolls:
+        async def due(self, now=None):
+            raise RuntimeError("scan boom")
+
+        async def cancel_stale_pending(self, now=None):
+            swept.append(True)
+            return 0
+
+    cog = poll_cog.PollCog(SimpleNamespace(polls=BrokenScanPolls()))
+    cog._ticks = poll_cog.STALE_SWEEP_EVERY_TICKS - 1
+
+    await cog.finish_due()
+
+    assert swept == [True], "掃描失敗把後續的清理也一起跳過了"

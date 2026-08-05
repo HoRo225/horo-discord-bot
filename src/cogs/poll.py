@@ -15,10 +15,14 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# 同 cogs/giveaway.py：保留期 24 小時的清理不需要 30 秒跑一次。
+STALE_SWEEP_EVERY_TICKS = 120
+
 
 class PollCog(commands.Cog):
     def __init__(self, bot: HoRoBot) -> None:
         self.bot = bot
+        self._ticks = 0
 
     async def cog_load(self) -> None:
         self.finish_due.start()
@@ -49,14 +53,13 @@ class PollCog(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def finish_due(self) -> None:
+        # 掃描失敗不該讓例外逃出 tasks.loop，否則整個背景結算會停止而 healthcheck
+        # 看不出來（gateway heartbeat 仍正常）。
         try:
-            cancelled = await self.bot.polls.cancel_stale_pending()
-            if cancelled:
-                log.info("已取消 %s 筆過期 pending 投票", cancelled)
             pending_items = await self.bot.polls.due()
         except Exception:
             log.exception("投票到期掃描失敗")
-            return
+            pending_items = []
 
         for pending in pending_items:
             try:
@@ -86,6 +89,20 @@ class PollCog(commands.Cog):
                     "投票到期處理失敗",
                     extra={"guild_id": pending.guild_id, "poll_id": pending.id},
                 )
+
+        await self._sweep_stale_pending()
+
+    async def _sweep_stale_pending(self) -> None:
+        """清理過期 pending；理由與隔離方式同 cogs/giveaway.py。"""
+        self._ticks += 1
+        if self._ticks % STALE_SWEEP_EVERY_TICKS:
+            return
+        try:
+            cancelled = await self.bot.polls.cancel_stale_pending()
+            if cancelled:
+                log.info("已取消 %s 筆過期 pending 投票", cancelled)
+        except Exception:
+            log.exception("清理過期 pending 投票失敗")
 
     @finish_due.before_loop
     async def before_finish_due(self) -> None:
