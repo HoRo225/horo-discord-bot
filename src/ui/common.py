@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 
@@ -71,11 +72,12 @@ async def discard_published_message(message: discord.Message) -> None:
 
     公告是先送 Discord 再寫回 DB 的，中間失敗會留下一則「看起來正常、實際上
     bot 完全不認得」的訊息。這裡盡力撤回，但吞掉自己的例外——補償失敗不該蓋掉
-    原始錯誤，那才是使用者需要看到的原因。
+    原始錯誤，那才是使用者需要看到的原因。CancelledError 也要吞：若原工作正因
+    cancellation 進入補償，第二次 cancellation 不應把原始取消狀態換成 ghost message。
     """
     try:
         await message.delete()
-    except Exception:
+    except (Exception, asyncio.CancelledError):
         log.exception("撤回未完成發布的公告訊息失敗", extra={"message_id": message.id})
 
 
