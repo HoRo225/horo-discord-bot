@@ -8,7 +8,7 @@ from discord.ext import commands, tasks
 
 from src import strings
 from src.cogs.common import messageable_channel
-from src.ui.giveaway import GiveawayMessageView
+from src.ui.giveaway import GiveawayMessageView, winners_line
 
 if TYPE_CHECKING:
     from src.bot import HoRoBot
@@ -48,8 +48,9 @@ class GiveawayCog(commands.Cog):
                     except discord.HTTPException:
                         pass
                 if giveaway.winners:
-                    winners = "、".join(f"<@{user_id}>" for user_id in giveaway.winners)
-                    content = strings.GIVEAWAY_ENDED.format(prize=giveaway.prize, winners=winners)
+                    content = strings.GIVEAWAY_ENDED.format(
+                        prize=giveaway.prize, winners=winners_line(giveaway)
+                    )
                     mentions = discord.AllowedMentions(users=True)
                 else:
                     content = strings.GIVEAWAY_ENDED_NONE.format(prize=giveaway.prize)

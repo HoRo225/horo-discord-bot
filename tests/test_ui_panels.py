@@ -11,7 +11,7 @@ from src.services.economy import DailyResult
 from src.ui.base import panel_action
 from src.ui.blackjack import BlackjackGameView
 from src.ui.economy import EconomyPanel, LeaderboardPanel
-from src.ui.giveaway import GiveawayMessageView, GiveawayPanel
+from src.ui.giveaway import GiveawayMessageView, GiveawayPanel, winners_line
 from src.ui.settings import ModelPanel
 from src.ui.status import ACCENTS, Notice, StatusKind, worst
 
@@ -106,6 +106,17 @@ def test_ended_giveaway_keeps_its_container_but_drops_entry_button():
     assert "Container" in kinds
     assert "TextDisplay" in kinds
     assert _buttons(view) == []
+
+
+def test_winners_line_discloses_a_short_draw():
+    """候選不足時抽樣只回傳較少人，靜默少發獎會被誤讀成漏抽。"""
+    full = SimpleNamespace(winner_count=2, winners=[1, 2])
+    short = SimpleNamespace(winner_count=3, winners=[1, 2])
+
+    assert strings.GIVEAWAY_PARTIAL_WINNERS.format(actual=2, expected=2) not in winners_line(full)
+    line = winners_line(short)
+    assert "<@1>" in line and "<@2>" in line
+    assert line.endswith(strings.GIVEAWAY_PARTIAL_WINNERS.format(actual=2, expected=3))
 
 
 def test_pending_giveaway_still_renders_its_entry_button():

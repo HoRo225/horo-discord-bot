@@ -57,6 +57,20 @@ def giveaway_text(giveaway: Giveaway) -> str:
     return f"## 🎁 {giveaway.prize}\n{body}\n-# {status}"
 
 
+def winners_line(giveaway: Giveaway) -> str:
+    """組出中獎者提及字串。
+
+    候選人不足 winner_count 時抽樣只會回傳較少人，靜默少發獎會被誤讀成漏抽，
+    所以這裡把實際人數一併說明。
+    """
+    mentions = "、".join(f"<@{user_id}>" for user_id in giveaway.winners)
+    if len(giveaway.winners) < giveaway.winner_count:
+        mentions += strings.GIVEAWAY_PARTIAL_WINNERS.format(
+            actual=len(giveaway.winners), expected=giveaway.winner_count
+        )
+    return mentions
+
+
 def _options(giveaways: Sequence[Giveaway]) -> list[discord.SelectOption]:
     return [
         discord.SelectOption(
@@ -350,8 +364,8 @@ class RerollModal(discord.ui.Modal):
             giveaway = await self.bot.giveaways.reroll(
                 int(self.target.values[0]), admin_user_id=interaction.user.id
             )
-            winners = "、".join(f"<@{user_id}>" for user_id in giveaway.winners)
-            winners = winners or strings.GIVEAWAY_NO_REROLL_CANDIDATE
+            # reroll() 在沒有候選人時會擋下來，所以這裡的 winners 必定非空。
+            winners = winners_line(giveaway)
             if interaction.channel is not None:
                 await interaction.channel.send(
                     strings.GIVEAWAY_REROLL_RESULT.format(id=giveaway.id, winners=winners),
