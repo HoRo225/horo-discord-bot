@@ -50,6 +50,9 @@ class PollCog(commands.Cog):
     @tasks.loop(seconds=30)
     async def finish_due(self) -> None:
         try:
+            cancelled = await self.bot.polls.cancel_stale_pending()
+            if cancelled:
+                log.info("已取消 %s 筆過期 pending 投票", cancelled)
             pending_items = await self.bot.polls.due()
         except Exception:
             log.exception("投票到期掃描失敗")
