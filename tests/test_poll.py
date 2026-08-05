@@ -32,6 +32,7 @@ async def test_poll_completion_persists_results_and_voters(db):
         duration=timedelta(hours=1),
         multiple=True,
     )
+    await service.publish(poll.id, message_id=999)
     completed = await service.complete(
         poll.id,
         [
@@ -44,3 +45,26 @@ async def test_poll_completion_persists_results_and_voters(db):
     async with db.session_factory() as session:
         count = await session.scalar(select(func.count()).select_from(PollVote))
     assert count == 3
+
+
+async def test_unpublished_poll_is_invisible_until_its_message_exists(db):
+    """Discord 發訊息失敗時投票停在 pending，背景結算不該把它當成正常活動。"""
+    service = PollService(db)
+    poll = await service.create(
+        guild_id=1,
+        channel_id=10,
+        created_by=20,
+        question="還沒公開",
+        answers=["甲", "乙"],
+        duration=timedelta(hours=1),
+        multiple=False,
+    )
+
+    assert poll.status == "pending"
+    assert await service.active(1) == []
+    assert await service.due(poll.ends_at + timedelta(seconds=1)) == []
+
+    await service.publish(poll.id, message_id=555)
+
+    assert [item.id for item in await service.active(1)] == [poll.id]
+    assert [item.id for item in await service.due(poll.ends_at + timedelta(seconds=1))] == [poll.id]

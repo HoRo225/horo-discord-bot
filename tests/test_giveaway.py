@@ -33,6 +33,7 @@ async def test_paid_entry_is_atomic_and_idempotent(db, economy):
         ticket_price=50,
         per_user_limit=5,
     )
+    await service.publish(giveaway.id, message_id=1000)
     first = await service.enter(
         giveaway_id=giveaway.id,
         guild_id=1,
@@ -64,9 +65,35 @@ async def test_finalize_without_entries_has_empty_winners(db, economy):
         ticket_price=0,
         per_user_limit=1,
     )
+    await service.publish(giveaway.id, message_id=1001)
     result = await service.finalize(giveaway.id)
     assert result.status == "completed"
     assert result.winners == []
+
+
+async def test_unpublished_giveaway_is_invisible_until_its_message_exists(db, economy):
+    """Discord 發訊息失敗時抽獎停在 pending，背景結算不該對它發「已結束」公告。"""
+    service = GiveawayService(db, economy)
+    giveaway = await service.create(
+        guild_id=1,
+        channel_id=100,
+        created_by=99,
+        prize="尚未公開",
+        winner_count=1,
+        ends_at=datetime.now(UTC) + timedelta(hours=1),
+        ticket_price=0,
+        per_user_limit=1,
+    )
+    overdue = giveaway.ends_at + timedelta(seconds=1)
+
+    assert giveaway.status == "pending"
+    assert await service.active(1) == []
+    assert await service.due(overdue) == []
+
+    await service.publish(giveaway.id, message_id=777)
+
+    assert [item.id for item in await service.active(1)] == [giveaway.id]
+    assert [item.id for item in await service.due(overdue)] == [giveaway.id]
 
 
 async def test_completed_lists_only_finalized_giveaways(db, economy):
@@ -84,6 +111,7 @@ async def test_completed_lists_only_finalized_giveaways(db, economy):
             ticket_price=0,
             per_user_limit=1,
         )
+        await service.publish(giveaway.id, message_id=2000 + giveaway.id)
         return giveaway.id
 
     still_running = await make("進行中")

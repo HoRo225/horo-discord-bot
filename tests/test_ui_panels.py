@@ -98,7 +98,7 @@ def test_ended_giveaway_keeps_its_container_but_drops_entry_button():
         winner_count=1,
         ticket_price=0,
         per_user_limit=1,
-        status="ended",
+        status="completed",
         ends_at=datetime.now(UTC),
     )
     view = GiveawayMessageView(fake_bot(), giveaway)
@@ -106,6 +106,22 @@ def test_ended_giveaway_keeps_its_container_but_drops_entry_button():
     assert "Container" in kinds
     assert "TextDisplay" in kinds
     assert _buttons(view) == []
+
+
+def test_pending_giveaway_still_renders_its_entry_button():
+    """公告訊息是在 publish() 之前送出的，那時狀態還是 pending。"""
+    giveaway = SimpleNamespace(
+        id=8,
+        prize="尚未公開的禮物",
+        winner_count=1,
+        ticket_price=0,
+        per_user_limit=1,
+        status="pending",
+        ends_at=datetime.now(UTC),
+    )
+    view = GiveawayMessageView(fake_bot(), giveaway)
+    assert _buttons(view) != []
+    assert strings.GIVEAWAY_STATUS_ENDED not in "".join(_texts(view))
 
 
 class FakeResponse:

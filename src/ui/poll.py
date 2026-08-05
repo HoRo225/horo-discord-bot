@@ -177,7 +177,7 @@ class CreatePollModal(discord.ui.Modal):
             message = await interaction.channel.send(
                 poll=native_poll, allowed_mentions=discord.AllowedMentions.none()
             )
-            await self.bot.polls.attach_message(poll_record.id, message.id)
+            await self.bot.polls.publish(poll_record.id, message.id)
             link = message_link(interaction.guild_id, message.channel.id, message.id)
             notice = Notice(strings.POLL_CREATED + strings.POLL_LINK.format(link=link))
             await swap_panel(interaction, await poll_panel(self.bot, interaction, notice=notice))

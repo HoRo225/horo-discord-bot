@@ -71,6 +71,10 @@ class PollService:
                 answers=answers,
                 multiple=multiple,
                 ends_at=current + duration,
+                # 先落在 pending，publish() 成功才轉 active。Discord 發訊息失敗時
+                # 這筆就停在 pending，而 active()/due() 都只看 active，因此不需要
+                # 任何補償動作也不會被背景結算當成正常投票。
+                status="pending",
             )
             session.add(poll)
             await session.flush()
@@ -78,12 +82,16 @@ class PollService:
 
         return await self.db.run_transaction(operation)
 
-    async def attach_message(self, poll_id: int, message_id: int) -> None:
+    async def publish(self, poll_id: int, message_id: int) -> None:
+        """綁定公告訊息並讓投票正式生效；兩者必須在同一交易內完成。"""
+
         async def operation(session: AsyncSession) -> None:
             poll = await session.get(Poll, poll_id)
             if poll is None:
                 raise NotFoundError(strings.ERR_POLL_NOT_FOUND)
             poll.message_id = message_id
+            if poll.status == "pending":
+                poll.status = "active"
 
         await self.db.run_transaction(operation)
 

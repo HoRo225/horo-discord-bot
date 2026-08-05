@@ -85,6 +85,10 @@ class GiveawayService:
                 ends_at=aware_utc(ends_at),
                 ticket_price=ticket_price,
                 per_user_limit=per_user_limit,
+                # 先落在 pending，publish() 成功才轉 active。Discord 發訊息失敗時
+                # 這筆就停在 pending，而 active()/due()/enter() 都只看 active，
+                # 因此不需要任何補償動作也不會被當成正常活動。
+                status="pending",
             )
             session.add(giveaway)
             await session.flush()
@@ -100,12 +104,16 @@ class GiveawayService:
 
         return await self.db.run_transaction(operation)
 
-    async def attach_message(self, giveaway_id: int, message_id: int) -> None:
+    async def publish(self, giveaway_id: int, message_id: int) -> None:
+        """綁定公告訊息並讓抽獎正式生效；兩者必須在同一交易內完成。"""
+
         async def operation(session: AsyncSession) -> None:
             giveaway = await session.get(Giveaway, giveaway_id)
             if giveaway is None:
                 raise NotFoundError(strings.ERR_GIVEAWAY_NOT_FOUND)
             giveaway.message_id = message_id
+            if giveaway.status == "pending":
+                giveaway.status = "active"
 
         await self.db.run_transaction(operation)
 

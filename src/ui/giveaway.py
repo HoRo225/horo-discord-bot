@@ -35,10 +35,12 @@ def parse_duration(value: str) -> timedelta:
 
 def giveaway_text(giveaway: Giveaway) -> str:
     """把抽獎資訊組成一段可放進 TextDisplay 的文字。"""
+    # 公告訊息是在 publish() 之前送出的，此時狀態還是 pending，
+    # 所以判斷「已結束」要看是不是 completed，不能看是不是 active。
     status = (
-        strings.GIVEAWAY_STATUS_ACTIVE
-        if giveaway.status == "active"
-        else strings.GIVEAWAY_STATUS_ENDED
+        strings.GIVEAWAY_STATUS_ENDED
+        if giveaway.status == "completed"
+        else strings.GIVEAWAY_STATUS_ACTIVE
     )
     price = (
         strings.GIVEAWAY_FREE
@@ -78,7 +80,7 @@ class GiveawayMessageView(discord.ui.LayoutView):
         items: list[discord.ui.Item[Any]] = []
         if giveaway is not None:
             items.append(discord.ui.TextDisplay(giveaway_text(giveaway)))
-        if giveaway is None or giveaway.status == "active":
+        if giveaway is None or giveaway.status != "completed":
             items.append(discord.ui.Separator())
             items.append(
                 discord.ui.ActionRow(
@@ -285,7 +287,7 @@ class CreateGiveawayModal(discord.ui.Modal):
                 view=GiveawayMessageView(self.bot, giveaway),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
-            await self.bot.giveaways.attach_message(giveaway.id, message.id)
+            await self.bot.giveaways.publish(giveaway.id, message.id)
             link = message_link(interaction.guild_id, message.channel.id, message.id)
             notice = Notice(
                 strings.GIVEAWAY_CREATED.format(giveaway_id=giveaway.id)
