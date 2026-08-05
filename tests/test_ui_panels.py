@@ -11,7 +11,7 @@ from src.services.economy import DailyResult
 from src.ui.base import panel_action
 from src.ui.blackjack import BlackjackGameView
 from src.ui.economy import EconomyPanel, LeaderboardPanel
-from src.ui.giveaway import GiveawayMessageView
+from src.ui.giveaway import GiveawayMessageView, GiveawayPanel
 from src.ui.settings import ModelPanel
 from src.ui.status import ACCENTS, Notice, StatusKind, worst
 
@@ -112,6 +112,7 @@ class FakeResponse:
     def __init__(self):
         self.done = False
         self.deferred = False
+        self.modals = []
 
     def is_done(self):
         return self.done
@@ -123,6 +124,10 @@ class FakeResponse:
     async def edit_message(self, **kwargs):
         self.done = True
         self.edits = kwargs
+
+    async def send_modal(self, modal):
+        self.done = True
+        self.modals.append(modal)
 
 
 class FakeFollowup:
@@ -159,6 +164,51 @@ class FakeEconomy:
 
     async def balance(self, _guild_id, _user_id):
         return 100
+
+
+class FakeGiveaways:
+    def __init__(self, completed):
+        self._completed = completed
+        self.active_calls = 0
+
+    async def completed(self, _guild_id, *, limit=25):
+        return self._completed
+
+    async def active(self, _guild_id, *, paid_only=False):
+        self.active_calls += 1
+        return []
+
+
+def _admin_interaction():
+    interaction = FakeInteraction()
+    interaction.user = SimpleNamespace(id=2, guild_permissions=SimpleNamespace(manage_guild=True))
+    return interaction
+
+
+async def test_reroll_shows_neutral_notice_when_no_completed_giveaway():
+    """沒有候選時不該開一張空 Select Modal。"""
+    giveaways = FakeGiveaways(completed=[])
+    panel = GiveawayPanel(SimpleNamespace(giveaways=giveaways))
+    interaction = _admin_interaction()
+
+    await panel.reroll(interaction)
+
+    assert interaction.response.modals == []
+    assert len(interaction.edits) == 1
+    assert isinstance(interaction.edits[0]["view"], GiveawayPanel)
+
+
+async def test_reroll_never_sources_its_options_from_active_giveaways():
+    """reroll() 只接受 completed，選單抓 active 會讓每個選項都必然失敗。"""
+    ended = SimpleNamespace(id=7, prize="已結束獎品")
+    giveaways = FakeGiveaways(completed=[ended])
+    panel = GiveawayPanel(SimpleNamespace(giveaways=giveaways))
+    interaction = _admin_interaction()
+
+    await panel.reroll(interaction)
+
+    assert giveaways.active_calls == 0
+    assert len(interaction.response.modals) == 1
 
 
 async def test_panel_action_edits_in_place_instead_of_sending_a_new_message():

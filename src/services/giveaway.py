@@ -170,6 +170,17 @@ class GiveawayService:
             result = await session.scalars(query.order_by(Giveaway.ends_at.asc()))
             return list(result)
 
+    async def completed(self, guild_id: int, *, limit: int = 25) -> list[Giveaway]:
+        """重抽只接受已結束的抽獎，所以選單必須從這裡取清單而不是 active()。"""
+        async with self.db.session_factory() as session:
+            result = await session.scalars(
+                select(Giveaway)
+                .where(Giveaway.guild_id == guild_id, Giveaway.status == "completed")
+                .order_by(Giveaway.finalized_at.desc())
+                .limit(limit)
+            )
+            return list(result)
+
     async def by_message(self, message_id: int) -> Giveaway | None:
         async with self.db.session_factory() as session:
             return await session.scalar(select(Giveaway).where(Giveaway.message_id == message_id))

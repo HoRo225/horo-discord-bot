@@ -67,3 +67,33 @@ async def test_finalize_without_entries_has_empty_winners(db, economy):
     result = await service.finalize(giveaway.id)
     assert result.status == "completed"
     assert result.winners == []
+
+
+async def test_completed_lists_only_finalized_giveaways(db, economy):
+    """重抽選單的資料來源；曾經誤用 active() 導致選任何項目都必然失敗。"""
+    service = GiveawayService(db, economy)
+
+    async def make(prize: str) -> int:
+        giveaway = await service.create(
+            guild_id=1,
+            channel_id=100,
+            created_by=99,
+            prize=prize,
+            winner_count=1,
+            ends_at=datetime.now(UTC) + timedelta(hours=1),
+            ticket_price=0,
+            per_user_limit=1,
+        )
+        return giveaway.id
+
+    still_running = await make("進行中")
+    already_ended = await make("已結束")
+    await service.finalize(already_ended)
+
+    listed = await service.completed(1)
+
+    assert [item.id for item in listed] == [already_ended]
+    assert still_running not in [item.id for item in listed]
+    # 每一個列出的項目都必須能通過 reroll() 的狀態檢查
+    for item in listed:
+        await service.reroll(item.id, admin_user_id=99)

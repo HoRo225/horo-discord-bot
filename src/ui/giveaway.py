@@ -188,7 +188,21 @@ class GiveawayPanel(Panel):
         if not is_admin(interaction):
             await self._deny(interaction)
             return
-        giveaways = await self.bot.giveaways.active(interaction.guild_id)
+        giveaways = await self.bot.giveaways.completed(interaction.guild_id)
+        if not giveaways:
+            # 同 buy()：沒有候選才走面板分支，有候選則送 Modal，所以只縮排這一段。
+            async with panel_action(
+                interaction, lambda note: giveaway_panel(self.bot, interaction, notice=note)
+            ):
+                await swap_panel(
+                    interaction,
+                    await giveaway_panel(
+                        self.bot,
+                        interaction,
+                        notice=Notice(strings.GIVEAWAY_NONE_COMPLETED, StatusKind.OFF),
+                    ),
+                )
+            return
         await interaction.response.send_modal(RerollModal(self.bot, giveaways))
 
 
