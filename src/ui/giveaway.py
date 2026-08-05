@@ -308,9 +308,9 @@ class CreateGiveawayModal(discord.ui.Modal):
             )
             try:
                 await self.bot.giveaways.publish(giveaway.id, message.id)
-            except Exception:
-                # 訊息已經公開但沒綁上 DB：抽獎會顯示成進行中、參加按鈕卻永遠
-                # 查不到活動。撤回訊息讓狀態回到「什麼都沒發生」。
+            except BaseException:
+                # 訊息已經公開但沒綁上 DB：包含 CancelledError 在內都要撤回，否則
+                # Discord 會留下 bot 永遠查不到的 ghost activity。
                 await discard_published_message(message)
                 raise
             link = message_link(interaction.guild_id, message.channel.id, message.id)
