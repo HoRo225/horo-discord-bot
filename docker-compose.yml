@@ -1,6 +1,9 @@
 services:
-  # 單一實例架構，不可 --scale bot=N：資料庫是 SQLite，檔案鎖無法跨容器，
-  # 且背景結算迴圈沒有多 worker 的所有權機制，會重複發出結束公告。
+  # 單一實例架構，不可 --scale bot=N。理由不是「SQLite 鎖不住」——同一台主機上
+  # bind mount 同一個檔案，SQLite 的檔案鎖其實是跨容器有效的。真正的原因是：
+  #   1. 背景結算迴圈沒有 worker 所有權機制，多個實例會各自結算並重複發公告
+  #   2. AI 對話記憶與速率限制都存在 process 記憶體裡，不會跨實例共享
+  #   3. SQLite 只允許單一 writer，多實例只會互相卡在 busy timeout
   bot:
     build:
       context: .
