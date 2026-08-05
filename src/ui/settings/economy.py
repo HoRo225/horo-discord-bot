@@ -65,9 +65,9 @@ class EconomySettingsModal(SettingsModal):
             custom_id="cs:settings:economy:modal",
         )
         self.currency = discord.ui.TextInput(default=settings.currency_name, max_length=50)
-        self.daily = discord.ui.TextInput(default=str(settings.daily_amount), max_length=18)
-        self.minimum = discord.ui.TextInput(default=str(settings.blackjack_min_bet), max_length=18)
-        self.maximum = discord.ui.TextInput(default=str(settings.blackjack_max_bet), max_length=18)
+        self.daily = discord.ui.TextInput(default=str(settings.daily_amount), max_length=7)
+        self.minimum = discord.ui.TextInput(default=str(settings.blackjack_min_bet), max_length=7)
+        self.maximum = discord.ui.TextInput(default=str(settings.blackjack_max_bet), max_length=7)
         for text, component in (
             (strings.CURRENCY_NAME, self.currency),
             (strings.DAILY_AMOUNT, self.daily),

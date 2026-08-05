@@ -10,6 +10,11 @@ from src.database.engine import Database
 from src.database.models import AdminAudit, GuildSettings
 from src.services.common import ValidationError
 
+# 金額類設定的上界。刻意不 import economy 的 MAX_BALANCE（避免 settings → economy
+# 的新依賴），而是取一個明顯低於它的量級：牌局理論最大賠付約 16 倍下注，即使頂到
+# 這個上界也離餘額上限很遠，等於在餘額豁免之外多一道獨立的防線。
+MAX_AMOUNT = 1_000_000
+
 
 @dataclass(slots=True)
 class SettingsService:
@@ -68,8 +73,8 @@ class SettingsService:
                 raise ValidationError(strings.ERR_CURRENCY_LENGTH)
             values["currency_name"] = name
         for key in ("daily_amount", "blackjack_min_bet", "blackjack_max_bet"):
-            if key in values and int(values[key]) < 0:
-                raise ValidationError(strings.ERR_AMOUNT_NEGATIVE)
+            if key in values and not 0 <= int(values[key]) <= MAX_AMOUNT:
+                raise ValidationError(strings.ERR_AMOUNT_LIMIT.format(limit=MAX_AMOUNT))
         for key in ("ai_daily_guild_quota", "ai_daily_user_quota"):
             if key in values and int(values[key]) <= 0:
                 raise ValidationError(strings.ERR_AI_QUOTA_POSITIVE)

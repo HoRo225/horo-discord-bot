@@ -237,7 +237,7 @@ TOGGLE_OFF = "關"
 # 服務層驗證訊息（會由互動錯誤處理器顯示）
 ERR_UNKNOWN_SETTINGS = "未知設定欄位：{fields}"
 ERR_CURRENCY_LENGTH = "貨幣名稱須為 1–50 字"
-ERR_AMOUNT_NEGATIVE = "金額不可為負數"
+ERR_AMOUNT_LIMIT = "金額必須介於 0 與 {limit:,} 之間"
 ERR_AI_QUOTA_POSITIVE = "AI 配額必須大於 0"
 ERR_AI_MODEL_LENGTH = "AI 模型名稱須為 1–200 字"
 ERR_BET_LIMITS = "21 點上限必須大於或等於正數下限"
