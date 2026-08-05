@@ -31,7 +31,13 @@ class BlackjackCog(commands.Cog):
     @tasks.loop(seconds=30)
     async def recover_and_timeout(self) -> None:
         now = datetime.now(UTC)
-        for game in await self.bot.blackjack.recoverable():
+        try:
+            recoverable_games = await self.bot.blackjack.recoverable()
+        except Exception:
+            log.exception("21 點待恢復牌局掃描失敗")
+            return
+
+        for game in recoverable_games:
             try:
                 channel = await messageable_channel(self.bot, game.channel_id)
                 message: discord.Message | None = None
