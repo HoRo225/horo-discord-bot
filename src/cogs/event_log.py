@@ -18,11 +18,13 @@ class EventLogCog(commands.Cog):
     def __init__(self, bot: HoRoBot) -> None:
         self.bot = bot
 
-    async def _log(self, guild: discord.Guild, content: str) -> None:
-        settings = await self.bot.settings_service.get(guild.id)
-        if settings.log_channel_id is None:
+    @staticmethod
+    async def _log(guild: discord.Guild, log_channel_id: int | None, content: str) -> None:
+        # 收窄成單一頻道 ID 而不是整包 settings：呼叫端為了判斷該不該記錄本來就
+        # 讀過一次，再讀一次等於每個事件多開一次 DB 交易。
+        if log_channel_id is None:
             return
-        channel = guild.get_channel(settings.log_channel_id)
+        channel = guild.get_channel(log_channel_id)
         if isinstance(channel, discord.abc.Messageable):
             await channel.send(content[:2_000], allowed_mentions=discord.AllowedMentions.none())
 
@@ -33,6 +35,7 @@ class EventLogCog(commands.Cog):
             if settings.log_member_events:
                 await self._log(
                     member.guild,
+                    settings.log_channel_id,
                     strings.EVENT_MEMBER_JOINED.format(member=str(member)),
                 )
         except Exception:
@@ -45,6 +48,7 @@ class EventLogCog(commands.Cog):
             if settings.log_member_events:
                 await self._log(
                     member.guild,
+                    settings.log_channel_id,
                     strings.EVENT_MEMBER_LEFT.format(member=str(member)),
                 )
         except Exception:
@@ -60,6 +64,7 @@ class EventLogCog(commands.Cog):
                 content = message.content or strings.EVENT_CONTENT_UNCACHED
                 await self._log(
                     message.guild,
+                    settings.log_channel_id,
                     strings.EVENT_MESSAGE_DELETED.format(
                         author=str(message.author), channel=message.channel.mention, content=content
                     ),
@@ -76,6 +81,7 @@ class EventLogCog(commands.Cog):
             if settings.log_message_events:
                 await self._log(
                     before.guild,
+                    settings.log_channel_id,
                     strings.EVENT_MESSAGE_EDITED.format(
                         author=str(before.author),
                         channel=before.channel.mention,

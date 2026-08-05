@@ -8,6 +8,7 @@ import discord
 from src import strings
 from src.database.models import BlackjackGame
 from src.services.blackjack import (
+    TERMINAL_PHASES,
     BlackjackOperationResult,
     can_double,
     can_split,
@@ -23,7 +24,6 @@ from src.ui.status import Notice
 if TYPE_CHECKING:
     from src.bot import HoRoBot
 
-TERMINAL_PHASES = frozenset({"settled", "refunded"})
 
 RESULT_NAMES = {
     "win": strings.BLACKJACK_RESULT_WIN,

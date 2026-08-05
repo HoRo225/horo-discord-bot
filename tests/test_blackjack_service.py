@@ -3,9 +3,42 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from src.services.blackjack import BlackjackService
+from src.services.blackjack import TERMINAL_PHASES, BlackjackService
 from src.services.common import ValidationError
 from src.services.settings import SettingsService
+
+# 規則引擎會寫入 game.phase 的所有值（rules.py 各處 state["phase"] = ...）。
+ALL_PHASES = frozenset(
+    {
+        "playing",
+        "insurance",
+        "dealer_blackjack",
+        "player_done",
+        "dealer",
+        "settling",
+        "settled",
+        "refunded",
+    }
+)
+
+
+def test_only_settled_and_refunded_count_as_terminal():
+    """曾經有一份 ACTIVE_PHASES 只列了 3 個進行中狀態，漏掉另外 3 個。
+
+    以終態列舉是為了讓「新增中間狀態」不必同步維護第二份清單，這裡釘住
+    兩者互補，避免哪天多寫一個 phase 卻忘了它會被當成進行中。
+    """
+    assert set(TERMINAL_PHASES) == {"settled", "refunded"}
+    assert set(TERMINAL_PHASES) <= ALL_PHASES
+    active = ALL_PHASES - set(TERMINAL_PHASES)
+    assert active == {
+        "playing",
+        "insurance",
+        "dealer_blackjack",
+        "player_done",
+        "dealer",
+        "settling",
+    }
 
 
 def shoe_for(*draws: str) -> list[str]:

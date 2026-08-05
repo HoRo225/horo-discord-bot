@@ -9,10 +9,10 @@ service(持久化轉接層)的所有公開名稱,呼叫端不需改動。
 from __future__ import annotations
 
 from src.services.blackjack.rules import (
-    ACTIVE_PHASES,
     RANKS,
     SUIT_DISPLAY,
     SUITS,
+    TERMINAL_PHASES,
     can_double,
     can_split,
     can_surrender,
@@ -42,10 +42,10 @@ from src.services.blackjack.service import (
 
 __all__ = [
     "ACTION_TIMEOUT",
-    "ACTIVE_PHASES",
     "RANKS",
     "SUIT_DISPLAY",
     "SUITS",
+    "TERMINAL_PHASES",
     "BlackjackOperationResult",
     "BlackjackService",
     "can_double",

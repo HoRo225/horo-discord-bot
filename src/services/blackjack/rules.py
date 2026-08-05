@@ -9,7 +9,10 @@ from src.services.common import ConflictError, ValidationError
 RANKS = ("A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K")
 SUITS = ("S", "H", "D", "C")
 SUIT_DISPLAY = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
-ACTIVE_PHASES = ("insurance", "playing", "dealer")
+# 牌局的終態：錢已結清、不可再操作。其餘 phase（insurance、playing、dealer、
+# dealer_blackjack、player_done、settling）一律視為仍在進行中。以終態列舉而非
+# 進行中列舉，新增中間狀態時才不會漏改這份清單。用 tuple 是為了配合 SQL 的 not_in()。
+TERMINAL_PHASES = ("settled", "refunded")
 
 
 def card_rank(card: str) -> str:

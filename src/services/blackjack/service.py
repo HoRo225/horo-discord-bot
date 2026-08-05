@@ -12,6 +12,7 @@ from src import strings
 from src.database.engine import Database
 from src.database.models import BlackjackGame, BlackjackStats
 from src.services.blackjack.rules import (
+    TERMINAL_PHASES,
     _current_hand,
     can_double,
     can_split,
@@ -72,7 +73,7 @@ class BlackjackService:
             select(BlackjackGame).where(
                 BlackjackGame.guild_id == guild_id,
                 BlackjackGame.user_id == user_id,
-                BlackjackGame.phase.not_in(("settled", "refunded")),
+                BlackjackGame.phase.not_in(TERMINAL_PHASES),
             )
         )
 
@@ -300,7 +301,7 @@ class BlackjackService:
         async with self.db.session_factory() as session:
             return list(
                 await session.scalars(
-                    select(BlackjackGame).where(BlackjackGame.phase.not_in(("settled", "refunded")))
+                    select(BlackjackGame).where(BlackjackGame.phase.not_in(TERMINAL_PHASES))
                 )
             )
 
@@ -309,7 +310,7 @@ class BlackjackService:
             game = await session.get(BlackjackGame, game_id)
             if game is None:
                 raise NotFoundError(strings.ERR_GAME_NOT_FOUND)
-            if game.phase in {"settled", "refunded"}:
+            if game.phase in TERMINAL_PHASES:
                 return BlackjackOperationResult(game, False)
             state = state_from_game(game)
             if state["phase"] == "insurance":
@@ -330,7 +331,7 @@ class BlackjackService:
             game = await session.get(BlackjackGame, game_id)
             if game is None:
                 raise NotFoundError(strings.ERR_GAME_NOT_FOUND)
-            if game.phase in {"settled", "refunded"}:
+            if game.phase in TERMINAL_PHASES:
                 return 0
             total = sum(int(hand["bet"]) for hand in game.hands) + game.insurance_bet
             result = await self.economy.apply_in_session(
