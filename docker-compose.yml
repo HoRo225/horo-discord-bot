@@ -15,8 +15,6 @@ services:
       - /tmp:size=64m,mode=1777
     volumes:
       - ./data:/app/data
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -34,7 +32,9 @@ services:
   # OpenAI 相容的 AI 閘道；bot 以服務名稱 ninerouter 走內部網路連線。
   # 服務名稱不用 9router，避免以數字開頭的 hostname 造成解析相容性問題。
   ninerouter:
-    image: decolua/9router:latest
+    # 釘住版本與 digest：latest 會隨上游改版漂移，讓同一個 commit 重新部署
+    # 拿到不同的 build。digest 是 multi-arch index，amd64/arm64 都適用。
+    image: decolua/9router:0.5.45@sha256:b9c46bce1b16a0ec86a36ed3421c1d60111db394e2c164d4c0a21dcc835c44aa
     restart: unless-stopped
     init: true
     environment:

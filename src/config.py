@@ -78,9 +78,9 @@ class Settings:
             discord_token=token,
             dev_guild_id=_optional_int("DEV_GUILD_ID"),
             database_url=database_url,
-            ai_base_url=os.getenv("AI_BASE_URL", "http://host.docker.internal:9000/v1")
-            .strip()
-            .rstrip("/"),
+            # 預設值必須與 .env.example 及 compose 的服務名稱／連接埠一致，
+            # 否則沒設 AI_BASE_URL 的環境會連到一個不存在的位址。
+            ai_base_url=os.getenv("AI_BASE_URL", "http://ninerouter:20128/v1").strip().rstrip("/"),
             ai_api_key=os.getenv("AI_API_KEY", "").strip(),
             ai_default_model=os.getenv("AI_DEFAULT_MODEL", "").strip(),
             ai_request_timeout=_positive_float("AI_REQUEST_TIMEOUT", 45),
