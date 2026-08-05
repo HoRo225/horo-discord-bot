@@ -28,7 +28,15 @@ class GiveawayCog(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def finish_due(self) -> None:
-        for pending in await self.bot.giveaways.due():
+        # due() 本身也可能失敗；若例外逃出 tasks.loop，整個背景結算工作可能停止，
+        # 但 gateway heartbeat 仍會繼續，healthcheck 看不出抽獎已不再結算。
+        try:
+            pending_items = await self.bot.giveaways.due()
+        except Exception:
+            log.exception("抽獎到期掃描失敗")
+            return
+
+        for pending in pending_items:
             try:
                 giveaway = await self.bot.giveaways.finalize(pending.id)
                 channel = await messageable_channel(self.bot, giveaway.channel_id)
