@@ -104,6 +104,11 @@ class BlackjackService:
                 transaction_type="blackjack",
                 idempotency_key=f"blackjack:{game.id}:settle",
                 details={"game_id": game.id, "outcome": outcome},
+                # 賠付豁免餘額上限，不要改回 True：這裡拋錯會讓整個交易 rollback，
+                # 連同下方的 phase = "settled" 一起丟掉，於是牌局停在非終局狀態、
+                # 之後每次操作與 timeout 回收都重跑這條結算、撞同一個錯，而本金
+                # 早已扣掉——結果是牌局永久卡死且玩家的錢拿不回來。
+                enforce_balance_cap=False,
             )
         stats = await session.get(BlackjackStats, (game.guild_id, game.user_id))
         if stats is None:
@@ -342,6 +347,9 @@ class BlackjackService:
                 transaction_type="blackjack",
                 idempotency_key=f"blackjack:{game.id}:refund",
                 details={"game_id": game.id, "reason": "missing_message"},
+                # 退還的是玩家自己下的注，退完不可能超過下注前的水位；擋下它只會
+                # 讓錢卡在已扣未退的狀態。
+                enforce_balance_cap=False,
             )
             game.phase = "refunded"
             game.outcome = {"refund": total, "reason": "missing_message"}

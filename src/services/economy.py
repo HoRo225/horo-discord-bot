@@ -17,8 +17,11 @@ from src.services.common import (
 )
 
 # 業務上限。餘額欄位本身是 BigInteger，這裡擋的是「這個數字對玩法還有意義嗎」，
-# 不是溢位。上限刻意遠高於 blackjack_max_bet 的量級：結算賠付走的是同一條
-# apply_in_session，若上限壓太低會讓賠付在交易內拋錯並被重試耗盡。
+# 不是溢位。
+#
+# 語意：只管制**外部資金流入**（簽到、管理員調整、收到轉帳）。牌局結算與退款不受
+# 管制，因為那賠的是玩家自己先投進去的注，不是新資金——而且擋下它的後果極糟：
+# 詳見 apply_in_session 的 enforce_balance_cap 說明。
 MAX_BALANCE = 1_000_000_000
 MAX_TRANSFER = 1_000_000
 
@@ -73,7 +76,14 @@ class EconomyService:
         idempotency_key: str,
         counterparty_user_id: int | None = None,
         details: dict[str, object] | None = None,
+        enforce_balance_cap: bool = True,
     ) -> TransactionResult:
+        """記一筆帳並更新錢包餘額。
+
+        `enforce_balance_cap` 預設 True，新增的資金流入路徑會自動落在受管制的
+        安全側；要豁免必須主動寫出來，在 diff 上看得見。目前只有牌局結算與退款
+        豁免——它們賠的是玩家自己先投進去的注，不是新資金。
+        """
         if not idempotency_key or len(idempotency_key) > 160:
             raise ValidationError(strings.ERR_IDEMPOTENCY_KEY)
         existing = await self.existing_transaction(session, guild_id, idempotency_key)
@@ -84,8 +94,8 @@ class EconomyService:
         new_balance = wallet.balance + amount
         if new_balance < 0:
             raise InsufficientFundsError(strings.ERR_INSUFFICIENT_FUNDS)
-        # 收斂在這裡：所有進出帳（簽到、轉帳、管理員調整、牌局賠付）都走這條路。
-        if new_balance > MAX_BALANCE:
+        # 收斂在這裡：簽到、轉帳、管理員調整都走這條路。
+        if enforce_balance_cap and new_balance > MAX_BALANCE:
             raise ValidationError(strings.ERR_BALANCE_LIMIT.format(limit=MAX_BALANCE))
         wallet.balance = new_balance
         transaction = Transaction(

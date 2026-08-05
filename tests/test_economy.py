@@ -113,6 +113,34 @@ async def test_balance_and_transfer_have_business_ceilings(db, economy):
     assert await economy.balance(1, 20) == 0
 
 
+async def test_balance_cap_can_be_waived_for_internal_settlement(db, economy):
+    """上限只管制外部資金流入；牌局結算與退款這類內部錢流必須能豁免。"""
+
+    async def operation(session):
+        await economy.apply_in_session(
+            session,
+            guild_id=1,
+            user_id=10,
+            amount=MAX_BALANCE,
+            transaction_type="admin",
+            idempotency_key="fill",
+        )
+        return await economy.apply_in_session(
+            session,
+            guild_id=1,
+            user_id=10,
+            amount=500,
+            transaction_type="blackjack",
+            idempotency_key="settle",
+            enforce_balance_cap=False,
+        )
+
+    result = await db.run_transaction(operation)
+
+    assert result.created is True
+    assert await economy.balance(1, 10) == MAX_BALANCE + 500
+
+
 async def test_concurrent_duplicate_transfer_only_moves_money_once(db, economy):
     await economy.apply(
         guild_id=1,

@@ -5,6 +5,7 @@ import pytest_asyncio
 
 from src.services.blackjack import TERMINAL_PHASES, BlackjackService
 from src.services.common import ValidationError
+from src.services.economy import MAX_BALANCE
 from src.services.settings import SettingsService
 
 # 規則引擎會寫入 game.phase 的所有值（rules.py 各處 state["phase"] = ...）。
@@ -83,6 +84,73 @@ async def test_start_settlement_and_refund_paths(db, economy, service):
     refunded = await service.refund_missing_message(active.game.id)
     assert refunded == 20
     assert await economy.balance(1, 10) == 115
+
+
+async def test_settlement_completes_even_at_the_balance_ceiling(db, economy, service):
+    """餘額上限只管制外部資金流入，牌局結算必須豁免。
+
+    若結算被上限擋下，交易會 rollback 並連 phase = "settled" 一起丟掉，牌局停在
+    非終局狀態，之後每次操作與 timeout 都重跑同一條結算、撞同一個錯，而本金早已
+    扣掉——結果是永久卡死且錢拿不回來。
+    """
+    await economy.apply(
+        guild_id=1,
+        user_id=10,
+        amount=MAX_BALANCE,
+        transaction_type="admin",
+        idempotency_key="fill-to-ceiling",
+    )
+
+    natural = await service.start(
+        guild_id=1,
+        user_id=10,
+        channel_id=20,
+        bet=10,
+        idempotency_key="natural-at-ceiling",
+        shoe=shoe_for("AS", "9H", "KD", "7C"),
+    )
+
+    assert natural.game.phase == "settled"
+    # 下注 10 扣掉、天生 21 點賠 25（含本金），淨賺 15
+    assert await economy.balance(1, 10) == MAX_BALANCE + 15
+
+
+async def test_refund_completes_when_balance_refilled_during_the_game(db, economy, service):
+    """退款退的是玩家自己下的注，擋下它只會讓錢卡在已扣未退。
+
+    單純的退款不可能超過下注前的水位，但牌局進行中若有其他進帳把餘額補回上限，
+    退款就會把餘額推過去——這是退款也必須豁免的原因。
+    """
+    await economy.apply(
+        guild_id=1,
+        user_id=10,
+        amount=MAX_BALANCE,
+        transaction_type="admin",
+        idempotency_key="fill-to-ceiling",
+    )
+    active = await service.start(
+        guild_id=1,
+        user_id=10,
+        channel_id=20,
+        bet=20,
+        idempotency_key="active-at-ceiling",
+        shoe=shoe_for("10S", "6H", "7D", "9C"),
+    )
+    assert active.game.phase == "playing"
+    assert await economy.balance(1, 10) == MAX_BALANCE - 20
+
+    # 牌局還開著的期間，另一筆進帳把餘額補回上限（這筆本身合法，剛好等於上限）
+    await economy.apply(
+        guild_id=1,
+        user_id=10,
+        amount=20,
+        transaction_type="admin",
+        idempotency_key="refill-during-game",
+    )
+    assert await economy.balance(1, 10) == MAX_BALANCE
+
+    assert await service.refund_missing_message(active.game.id) == 20
+    assert await economy.balance(1, 10) == MAX_BALANCE + 20
 
 
 async def test_timeout_auto_stands_and_settles(db, economy, service):
