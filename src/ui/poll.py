@@ -17,7 +17,7 @@ from src.ui.base import (
     show_error,
     swap_panel,
 )
-from src.ui.common import is_admin, message_link
+from src.ui.common import discard_published_message, is_admin, message_link
 from src.ui.status import Notice
 
 if TYPE_CHECKING:
@@ -177,7 +177,13 @@ class CreatePollModal(discord.ui.Modal):
             message = await interaction.channel.send(
                 poll=native_poll, allowed_mentions=discord.AllowedMentions.none()
             )
-            await self.bot.polls.publish(poll_record.id, message.id)
+            try:
+                await self.bot.polls.publish(poll_record.id, message.id)
+            except Exception:
+                # 原生投票沒有自訂按鈕，沒綁上 DB 的話使用者照樣投得下去，但票只
+                # 存在 Discord 端、背景結算永遠掃不到，也不會有結果公告。
+                await discard_published_message(message)
+                raise
             link = message_link(interaction.guild_id, message.channel.id, message.id)
             notice = Notice(strings.POLL_CREATED + strings.POLL_LINK.format(link=link))
             await swap_panel(interaction, await poll_panel(self.bot, interaction, notice=notice))

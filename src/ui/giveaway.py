@@ -11,7 +11,12 @@ from src import strings
 from src.database.models import Giveaway
 from src.services.common import aware_utc
 from src.ui.base import PagedPanel, Panel, button, defer_update, panel_action, swap_panel
-from src.ui.common import handle_interaction_error, is_admin, message_link
+from src.ui.common import (
+    discard_published_message,
+    handle_interaction_error,
+    is_admin,
+    message_link,
+)
 from src.ui.status import Notice, StatusKind
 
 if TYPE_CHECKING:
@@ -301,7 +306,13 @@ class CreateGiveawayModal(discord.ui.Modal):
                 view=GiveawayMessageView(self.bot, giveaway),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
-            await self.bot.giveaways.publish(giveaway.id, message.id)
+            try:
+                await self.bot.giveaways.publish(giveaway.id, message.id)
+            except Exception:
+                # 訊息已經公開但沒綁上 DB：抽獎會顯示成進行中、參加按鈕卻永遠
+                # 查不到活動。撤回訊息讓狀態回到「什麼都沒發生」。
+                await discard_published_message(message)
+                raise
             link = message_link(interaction.guild_id, message.channel.id, message.id)
             notice = Notice(
                 strings.GIVEAWAY_CREATED.format(giveaway_id=giveaway.id)

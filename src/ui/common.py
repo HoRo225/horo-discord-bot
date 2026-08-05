@@ -66,6 +66,19 @@ async def handle_interaction_error(interaction: discord.Interaction, error: Base
     await send_ephemeral(interaction, error_notice(interaction, error))
 
 
+async def discard_published_message(message: discord.Message) -> None:
+    """撤回剛送出但沒能完成綁定的公告訊息。
+
+    公告是先送 Discord 再寫回 DB 的，中間失敗會留下一則「看起來正常、實際上
+    bot 完全不認得」的訊息。這裡盡力撤回，但吞掉自己的例外——補償失敗不該蓋掉
+    原始錯誤，那才是使用者需要看到的原因。
+    """
+    try:
+        await message.delete()
+    except Exception:
+        log.exception("撤回未完成發布的公告訊息失敗", extra={"message_id": message.id})
+
+
 def is_admin(interaction: discord.Interaction) -> bool:
     permissions = getattr(interaction.user, "guild_permissions", None)
     return bool(permissions and permissions.manage_guild)

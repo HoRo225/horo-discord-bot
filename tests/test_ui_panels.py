@@ -238,6 +238,86 @@ async def test_reroll_never_sources_its_options_from_active_giveaways():
     assert len(interaction.response.modals) == 1
 
 
+class RecordingMessage:
+    def __init__(self, *, delete_error: Exception | None = None) -> None:
+        self.id = 555
+        self.channel = SimpleNamespace(id=99)
+        self.deleted = False
+        self._delete_error = delete_error
+
+    async def delete(self):
+        if self._delete_error is not None:
+            raise self._delete_error
+        self.deleted = True
+
+
+class RecordingChannel:
+    def __init__(self, message) -> None:
+        self.message = message
+
+    async def send(self, *_args, **_kwargs):
+        return self.message
+
+
+class FailingPublishGiveaways:
+    def __init__(self) -> None:
+        self.published = False
+
+    async def create(self, **_kwargs):
+        return SimpleNamespace(
+            id=7,
+            prize="測試獎品",
+            winner_count=1,
+            ticket_price=0,
+            per_user_limit=1,
+            status="pending",
+            ends_at=datetime.now(UTC),
+        )
+
+    async def publish(self, _giveaway_id, _message_id):
+        raise RuntimeError("DB 掛了")
+
+
+def _create_modal(bot, channel):
+    from src.ui.giveaway import CreateGiveawayModal
+
+    modal = CreateGiveawayModal(bot)
+    # TextInput 的 str() 就是它的 value，直接塞字串即可驅動 on_submit。
+    modal.prize, modal.winners, modal.duration = "測試獎品", "1", "1h"
+    modal.price, modal.limit = "0", "1"
+    interaction = _admin_interaction()
+    interaction.channel = channel
+    interaction.channel_id = 99
+    interaction.id = 12345
+    return modal, interaction
+
+
+async def test_giveaway_publish_failure_withdraws_the_announcement():
+    """訊息已公開卻沒綁上 DB 時，抽獎會顯示成進行中但參加按鈕永遠查不到活動。"""
+    message = RecordingMessage()
+    modal, interaction = _create_modal(
+        SimpleNamespace(giveaways=FailingPublishGiveaways()), RecordingChannel(message)
+    )
+
+    await modal.on_submit(interaction)
+
+    assert message.deleted is True
+    # 使用者看到的必須是原始失敗原因，而不是補償動作的結果。
+    assert strings.GENERIC_ERROR.split("{")[0] in "".join(_texts(interaction.edits[-1]["view"]))
+
+
+async def test_publish_failure_surfaces_the_original_error_even_if_withdraw_fails():
+    message = RecordingMessage(delete_error=RuntimeError("連刪除也失敗"))
+    modal, interaction = _create_modal(
+        SimpleNamespace(giveaways=FailingPublishGiveaways()), RecordingChannel(message)
+    )
+
+    await modal.on_submit(interaction)
+
+    assert message.deleted is False
+    assert strings.GENERIC_ERROR.split("{")[0] in "".join(_texts(interaction.edits[-1]["view"]))
+
+
 async def test_panel_action_edits_in_place_instead_of_sending_a_new_message():
     """單一訊息模型的核心契約：面板內的操作只改寫目前訊息，不另開訊息。"""
     bot = SimpleNamespace(settings_service=FakeSettingsService(), economy=FakeEconomy())
