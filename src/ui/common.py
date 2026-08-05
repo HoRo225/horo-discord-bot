@@ -67,17 +67,31 @@ async def handle_interaction_error(interaction: discord.Interaction, error: Base
     await send_ephemeral(interaction, error_notice(interaction, error))
 
 
+COMPENSATION_TIMEOUT_SECONDS = 5
+
+
 async def discard_published_message(message: discord.Message) -> None:
     """撤回剛送出但沒能完成綁定的公告訊息。
 
+    **只能在 except 補償路徑中呼叫，且呼叫端必須把原始例外 re-raise。**
+    本函式會吞掉 CancelledError，若在正常路徑使用，工作被取消時會被靜默忽略。
+
     公告是先送 Discord 再寫回 DB 的，中間失敗會留下一則「看起來正常、實際上
     bot 完全不認得」的訊息。這裡盡力撤回，但吞掉自己的例外——補償失敗不該蓋掉
-    原始錯誤，那才是使用者需要看到的原因。CancelledError 也要吞：若原工作正因
-    cancellation 進入補償，第二次 cancellation 不應把原始取消狀態換成 ghost message。
+    原始錯誤，那才是使用者需要看到的原因。
+
+    刪除包了 shield + timeout：進入補償時工作往往已經被取消一次，裸 await 會被
+    第二次 cancellation（asyncio.timeout / TaskGroup 情境）直接打斷，補償等於沒做；
+    shield 讓刪除跑完，timeout 則避免在已逾時的情境下無限延後收尾。
     """
     try:
-        await message.delete()
-    except (Exception, asyncio.CancelledError):
+        await asyncio.wait_for(
+            asyncio.shield(message.delete()), timeout=COMPENSATION_TIMEOUT_SECONDS
+        )
+    except asyncio.CancelledError:
+        # 關機或逾時途中被取消是常態，不是錯誤，不要噴 traceback 假警報。
+        log.warning("撤回未完成發布的公告訊息被取消", extra={"message_id": message.id})
+    except Exception:
         log.exception("撤回未完成發布的公告訊息失敗", extra={"message_id": message.id})
 
 

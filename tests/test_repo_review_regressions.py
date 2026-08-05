@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -405,3 +406,73 @@ async def test_due_scan_failure_still_runs_cleanup_and_keeps_loop_alive():
     await cog.finish_due()
 
     assert swept == [True], "掃描失敗把後續的清理也一起跳過了"
+
+
+async def test_compensation_finishes_despite_a_second_cancellation():
+    """進入補償時工作往往已被取消一次；第二次取消不該讓撤回半途而廢。
+
+    既有的取消測試都是讓 publish 直接 raise CancelledError，從未真的
+    task.cancel()，因此「補償的 await 會不會被再次打斷」這個真正的風險點
+    原本零覆蓋。
+    """
+    from src.ui.common import discard_published_message
+
+    finished = asyncio.Event()
+
+    class SlowDeleteMessage:
+        id = 555
+        channel = SimpleNamespace(id=10)
+
+        def __init__(self) -> None:
+            self.deleted = False
+
+        async def delete(self) -> None:
+            await asyncio.sleep(0.05)
+            self.deleted = True
+            finished.set()
+
+    message = SlowDeleteMessage()
+    task = asyncio.create_task(discard_published_message(message))
+    await asyncio.sleep(0)  # 讓 delete 真的進入 await
+    task.cancel()
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    # shield 讓已經開始的刪除跑完，而不是留下 ghost message。
+    await asyncio.wait_for(finished.wait(), timeout=1)
+    assert message.deleted is True
+
+
+async def test_blackjack_withdraws_the_table_before_refunding():
+    """順序保證：退款會讓牌局脫離 recoverable()，所以必須先撤訊息。
+
+    若先退款而撤訊息失敗，帶按鈕的 ghost table 就永久失去背景清理資格；
+    反過來則還有 30 秒後的 recovery loop 兜底。
+    """
+    order: list[str] = []
+
+    class OrderRecordingMessage:
+        id = 555
+        channel = SimpleNamespace(id=10)
+
+        async def delete(self) -> None:
+            order.append("delete")
+
+    class OrderRecordingBlackjack:
+        async def start(self, **_kwargs):
+            return SimpleNamespace(game=active_blackjack_game(), settled_now=False)
+
+        async def attach_message(self, _game_id, _message_id):
+            raise RuntimeError("attach 失敗")
+
+        async def refund_missing_message(self, _game_id):
+            order.append("refund")
+            return 10
+
+    bot = SimpleNamespace(blackjack=OrderRecordingBlackjack())
+    interaction = FakeInteraction(channel=RecordingChannel(OrderRecordingMessage()))
+
+    await start_game(bot, interaction, 10)
+
+    assert order == ["delete", "refund"], f"補償順序錯誤：{order}"

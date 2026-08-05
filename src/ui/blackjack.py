@@ -20,7 +20,12 @@ from src.services.blackjack import (
     state_from_game,
 )
 from src.ui.base import Panel, button, defer_update, panel_action, swap_panel
-from src.ui.common import discard_published_message, handle_interaction_error, message_link
+from src.ui.common import (
+    COMPENSATION_TIMEOUT_SECONDS,
+    discard_published_message,
+    handle_interaction_error,
+    message_link,
+)
 from src.ui.status import Notice
 
 if TYPE_CHECKING:
@@ -330,10 +335,20 @@ class CustomBetModal(discord.ui.Modal):
 
 
 async def _refund_unpublished_game(bot: HoRoBot, game_id: str) -> None:
-    """盡力退款，但補償失敗不可蓋掉原始 send/attach/cancellation 例外。"""
+    """盡力退款，但補償失敗不可蓋掉原始 send/attach/cancellation 例外。
+
+    與 discard_published_message 同理用 shield 包住：進入補償時工作常常已被取消
+    一次，裸 await 會被第二次 cancellation 打斷，錢就卡在已扣未退。退款失敗時
+    phase 仍非終局，30 秒後背景 recovery loop 會補上。
+    """
     try:
-        await bot.blackjack.refund_missing_message(game_id)
-    except (Exception, asyncio.CancelledError):
+        await asyncio.wait_for(
+            asyncio.shield(bot.blackjack.refund_missing_message(game_id)),
+            timeout=COMPENSATION_TIMEOUT_SECONDS,
+        )
+    except asyncio.CancelledError:
+        log.warning("回退未發布的 21 點牌局被取消", extra={"game_id": game_id})
+    except Exception:
         log.exception("回退未發布的 21 點牌局失敗", extra={"game_id": game_id})
 
 
@@ -358,11 +373,17 @@ async def start_game(bot: HoRoBot, interaction: discord.Interaction, amount: int
             )
             await bot.blackjack.attach_message(result.game.id, message.id)
         except BaseException:
-            # start() 已經扣款並建立 game。任何後續失敗（包含 CancelledError）都要先
-            # 退款；若 Discord 訊息已送出，再把 ghost table 一併撤回。
-            await _refund_unpublished_game(bot, result.game.id)
+            # start() 已經扣款並建立 game。任何後續失敗（包含 CancelledError）都要
+            # 退款，若訊息已送出也要撤回 ghost table。
+            #
+            # 順序很重要：先撤訊息再退款。退款會把 phase 設成 refunded，那一刻起
+            # 這局就脫離 recoverable()，背景 recovery loop 再也不會碰它——此時若
+            # 撤訊息才失敗，帶按鈕的 ghost table 就永久留在頻道上沒人清。反過來
+            # 先撤訊息、退款才失敗的話，phase 仍非終局且 message_id 為 NULL，
+            # 30 秒後 recovery loop 會補上退款。
             if message is not None:
                 await discard_published_message(message)
+            await _refund_unpublished_game(bot, result.game.id)
             raise
         link = message_link(interaction.guild_id, message.channel.id, message.id)
         notice = Notice(strings.BLACKJACK_GAME_CREATED.format(link=link))
