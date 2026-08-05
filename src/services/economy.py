@@ -16,6 +16,12 @@ from src.services.common import (
     taipei_today,
 )
 
+# 業務上限。餘額欄位本身是 BigInteger，這裡擋的是「這個數字對玩法還有意義嗎」，
+# 不是溢位。上限刻意遠高於 blackjack_max_bet 的量級：結算賠付走的是同一條
+# apply_in_session，若上限壓太低會讓賠付在交易內拋錯並被重試耗盡。
+MAX_BALANCE = 1_000_000_000
+MAX_TRANSFER = 1_000_000
+
 
 @dataclass(frozen=True, slots=True)
 class TransactionResult:
@@ -78,6 +84,9 @@ class EconomyService:
         new_balance = wallet.balance + amount
         if new_balance < 0:
             raise InsufficientFundsError(strings.ERR_INSUFFICIENT_FUNDS)
+        # 收斂在這裡：所有進出帳（簽到、轉帳、管理員調整、牌局賠付）都走這條路。
+        if new_balance > MAX_BALANCE:
+            raise ValidationError(strings.ERR_BALANCE_LIMIT.format(limit=MAX_BALANCE))
         wallet.balance = new_balance
         transaction = Transaction(
             guild_id=guild_id,
@@ -167,6 +176,8 @@ class EconomyService:
             raise ConflictError(strings.ERR_SELF_TRANSFER)
         if amount <= 0:
             raise ValidationError(strings.ERR_TRANSFER_POSITIVE)
+        if amount > MAX_TRANSFER:
+            raise ValidationError(strings.ERR_TRANSFER_LIMIT.format(limit=MAX_TRANSFER))
 
         async def operation(session: AsyncSession) -> tuple[int, int, bool]:
             debit = await self.apply_in_session(

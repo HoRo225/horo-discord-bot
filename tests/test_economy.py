@@ -7,7 +7,8 @@ import pytest
 from sqlalchemy import func, select
 
 from src.database.models import Transaction, Wallet
-from src.services.common import ConflictError, InsufficientFundsError
+from src.services.common import ConflictError, InsufficientFundsError, ValidationError
+from src.services.economy import MAX_BALANCE, MAX_TRANSFER
 
 
 async def test_daily_uses_taipei_day_and_is_idempotent(economy):
@@ -76,6 +77,40 @@ async def test_transaction_idempotency_and_no_negative_balance(db, economy):
     async with db.session_factory() as session:
         count = await session.scalar(select(func.count()).select_from(Transaction))
     assert count == 1
+
+
+async def test_balance_and_transfer_have_business_ceilings(db, economy):
+    await economy.apply(
+        guild_id=1,
+        user_id=10,
+        amount=MAX_BALANCE,
+        transaction_type="admin",
+        idempotency_key="fill",
+    )
+
+    # 再多一塊就超過上限，且失敗的交易不得留下任何痕跡。
+    with pytest.raises(ValidationError):
+        await economy.apply(
+            guild_id=1,
+            user_id=10,
+            amount=1,
+            transaction_type="admin",
+            idempotency_key="overflow",
+        )
+    assert await economy.balance(1, 10) == MAX_BALANCE
+    async with db.session_factory() as session:
+        count = await session.scalar(select(func.count()).select_from(Transaction))
+    assert count == 1
+
+    with pytest.raises(ValidationError):
+        await economy.transfer(
+            guild_id=1,
+            sender_id=10,
+            recipient_id=20,
+            amount=MAX_TRANSFER + 1,
+            idempotency_key="too-big",
+        )
+    assert await economy.balance(1, 20) == 0
 
 
 async def test_concurrent_duplicate_transfer_only_moves_money_once(db, economy):
