@@ -15,20 +15,23 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from src.config import validate_database_url
+
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
 class Database:
-    """只支援 SQLite。
+    """只支援檔案型 SQLite + aiosqlite。
 
     全專案的冪等、AI 配額與各種上限檢查都是「先讀後寫」，本身沒有 DB 層的
     互斥保護，正確性完全來自 run_transaction 的 BEGIN IMMEDIATE 寫入序列化。
-    換成其他後端不會報錯，只會靜默失去這些保證，因此 Settings.from_env()
-    會在入口直接擋下非 SQLite 的 DATABASE_URL。
+    Database 本身也會 enforce URL contract，避免繞過 Settings.from_env() 直接建構
+    時靜默失去這些保證。
     """
 
     def __init__(self, url: str) -> None:
+        validate_database_url(url)
         self.url = url
         self._ensure_sqlite_directory()
         self.engine: AsyncEngine = create_async_engine(
@@ -43,11 +46,7 @@ class Database:
 
     def _ensure_sqlite_directory(self) -> None:
         prefix = "sqlite+aiosqlite:///"
-        if not self.url.startswith(prefix):
-            return
         raw_path = self.url.removeprefix(prefix)
-        if raw_path == ":memory:" or raw_path.startswith("file:"):
-            return
         Path(raw_path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
 
     def _configure_sqlite(self) -> None:
