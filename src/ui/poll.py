@@ -179,9 +179,9 @@ class CreatePollModal(discord.ui.Modal):
             )
             try:
                 await self.bot.polls.publish(poll_record.id, message.id)
-            except Exception:
-                # 原生投票沒有自訂按鈕，沒綁上 DB 的話使用者照樣投得下去，但票只
-                # 存在 Discord 端、背景結算永遠掃不到，也不會有結果公告。
+            except BaseException:
+                # CancelledError 也要走補償；否則 DB rollback 後原生投票仍留在 Discord，
+                # 使用者可繼續投票但背景結算永遠看不到它。
                 await discard_published_message(message)
                 raise
             link = message_link(interaction.guild_id, message.channel.id, message.id)
