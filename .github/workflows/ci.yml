@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+# 同 repo 的分支開 PR 時，push 與 pull_request 會各觸發一次；同一 ref 只留最新那次。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
