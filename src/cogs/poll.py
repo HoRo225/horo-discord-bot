@@ -49,7 +49,13 @@ class PollCog(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def finish_due(self) -> None:
-        for pending in await self.bot.polls.due():
+        try:
+            pending_items = await self.bot.polls.due()
+        except Exception:
+            log.exception("投票到期掃描失敗")
+            return
+
+        for pending in pending_items:
             try:
                 channel = await messageable_channel(self.bot, pending.channel_id)
                 native: discord.Poll | None = None
