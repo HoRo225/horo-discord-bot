@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import func, select
 
-from src.database.models import Transaction
+from src.database.models import Transaction, Wallet
 from src.services.common import ConflictError, InsufficientFundsError
 
 
@@ -18,6 +18,32 @@ async def test_daily_uses_taipei_day_and_is_idempotent(economy):
     next_day = await economy.daily(1, 10, 100, now=after_midnight_utc)
     assert (first.claimed, duplicate.claimed, next_day.claimed) == (True, False, True)
     assert next_day.balance == 200
+
+
+async def test_repeated_daily_reports_current_balance_not_a_stale_snapshot(db, economy):
+    """兩條「已簽到」的 early-return 必須回同一種餘額：當前餘額。"""
+    day = datetime(2026, 8, 3, 15, 59, tzinfo=UTC)
+    await economy.daily(1, 10, 100, now=day)
+    # 簽到後另外進帳，讓「當前餘額」與「簽到當下的餘額」分岔。
+    await economy.apply(
+        guild_id=1,
+        user_id=10,
+        amount=50,
+        transaction_type="admin",
+        idempotency_key="later-topup",
+    )
+
+    # last_daily 那條 early-return。
+    assert (await economy.daily(1, 10, 100, now=day)).balance == 150
+
+    # 清掉 last_daily，改由冪等鍵攔截，兩條路徑要回報同一個數字。
+    async with db.session_factory() as session:
+        wallet = await session.get(Wallet, (1, 10))
+        wallet.last_daily = None
+        await session.commit()
+
+    assert (await economy.daily(1, 10, 100, now=day)).balance == 150
+    assert await economy.balance(1, 10) == 150
 
 
 async def test_transaction_idempotency_and_no_negative_balance(db, economy):

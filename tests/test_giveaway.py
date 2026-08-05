@@ -71,6 +71,41 @@ async def test_finalize_without_entries_has_empty_winners(db, economy):
     assert result.winners == []
 
 
+async def test_replayed_entry_with_a_bigger_quantity_is_not_judged_against_the_limit(db, economy):
+    """重放不會再扣款，所以不該拿新的 quantity 去比每人上限而誤判超限。"""
+    service = GiveawayService(db, economy)
+    await economy.apply(
+        guild_id=1,
+        user_id=10,
+        amount=1_000,
+        transaction_type="admin",
+        idempotency_key="seed",
+    )
+    giveaway = await service.create(
+        guild_id=1,
+        channel_id=100,
+        created_by=99,
+        prize="測試獎品",
+        winner_count=1,
+        ends_at=datetime.now(UTC) + timedelta(hours=1),
+        ticket_price=50,
+        per_user_limit=2,
+    )
+    await service.publish(giveaway.id, message_id=1002)
+    await service.enter(
+        giveaway_id=giveaway.id, guild_id=1, user_id=10, quantity=2, idempotency_key="click"
+    )
+
+    # 同一把鍵、更大的 quantity：這次已經付過款了，應該原樣回報而不是拋超限。
+    replay = await service.enter(
+        giveaway_id=giveaway.id, guild_id=1, user_id=10, quantity=5, idempotency_key="click"
+    )
+
+    assert replay.created is False
+    assert replay.weight == 2
+    assert await economy.balance(1, 10) == 900
+
+
 async def test_unpublished_giveaway_is_invisible_until_its_message_exists(db, economy):
     """Discord 發訊息失敗時抽獎停在 pending，背景結算不該對它發「已結束」公告。"""
     service = GiveawayService(db, economy)

@@ -44,6 +44,18 @@ class EconomyService:
             await session.flush()
         return wallet
 
+    @staticmethod
+    async def existing_transaction(
+        session: AsyncSession, guild_id: int, idempotency_key: str
+    ) -> Transaction | None:
+        """查同一把冪等鍵是否已經記過帳；呼叫端據此判斷這次是不是重放。"""
+        return await session.scalar(
+            select(Transaction).where(
+                Transaction.guild_id == guild_id,
+                Transaction.idempotency_key == idempotency_key,
+            )
+        )
+
     async def apply_in_session(
         self,
         session: AsyncSession,
@@ -58,12 +70,7 @@ class EconomyService:
     ) -> TransactionResult:
         if not idempotency_key or len(idempotency_key) > 160:
             raise ValidationError(strings.ERR_IDEMPOTENCY_KEY)
-        existing = await session.scalar(
-            select(Transaction).where(
-                Transaction.guild_id == guild_id,
-                Transaction.idempotency_key == idempotency_key,
-            )
-        )
+        existing = await self.existing_transaction(session, guild_id, idempotency_key)
         if existing is not None:
             return TransactionResult(existing.balance_after, False, existing.id)
 
@@ -141,7 +148,9 @@ class EconomyService:
                 idempotency_key=f"daily:{user_id}:{today.isoformat()}",
             )
             wallet.last_daily = today
-            return DailyResult(result.created, amount if result.created else 0, result.balance)
+            # 回傳當前餘額而不是 result.balance：重放時後者是當初那筆交易的
+            # 歷史快照，會與 last_daily 那條 early-return 回報的餘額不一致。
+            return DailyResult(result.created, amount if result.created else 0, wallet.balance)
 
         return await self.db.run_transaction(operation)
 

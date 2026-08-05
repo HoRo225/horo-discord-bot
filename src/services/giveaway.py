@@ -149,6 +149,11 @@ class GiveawayService:
                 entry.weight = 1
                 return EntryResult(1, 0, True)
 
+            payment_key = f"giveaway:{giveaway_id}:{idempotency_key}"
+            # 上限檢查要排在重放判定之後：同一把鍵重送時這次根本不會扣款，
+            # 卻會拿新的 quantity 去比上限而誤判成超過每人限額。
+            if await self.economy.existing_transaction(session, guild_id, payment_key) is not None:
+                return EntryResult(entry.weight, 0, False)
             if entry.weight + quantity > giveaway.per_user_limit:
                 raise ValidationError(strings.ERR_ENTRY_LIMIT_EXCEEDED)
             cost = giveaway.ticket_price * quantity
@@ -158,7 +163,7 @@ class GiveawayService:
                 user_id=user_id,
                 amount=-cost,
                 transaction_type="ticket",
-                idempotency_key=f"giveaway:{giveaway_id}:{idempotency_key}",
+                idempotency_key=payment_key,
                 details={"giveaway_id": giveaway_id, "quantity": quantity},
             )
             if payment.created:
