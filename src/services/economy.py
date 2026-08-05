@@ -20,8 +20,8 @@ from src.services.common import (
 # 不是溢位。
 #
 # 語意：只管制**外部資金流入**（簽到、管理員調整、收到轉帳）。牌局結算與退款不受
-# 管制，因為那賠的是玩家自己先投進去的注，不是新資金——而且擋下它的後果極糟：
-# 詳見 apply_in_session 的 enforce_balance_cap 說明。
+# 管制；而扣款即使發生在餘額已超過上限時也必須允許，否則玩家贏到上限以上後反而
+# 無法下注、買券、轉帳或被管理員扣款。
 MAX_BALANCE = 1_000_000_000
 MAX_TRANSFER = 1_000_000
 
@@ -80,9 +80,9 @@ class EconomyService:
     ) -> TransactionResult:
         """記一筆帳並更新錢包餘額。
 
-        `enforce_balance_cap` 預設 True，新增的資金流入路徑會自動落在受管制的
+        `enforce_balance_cap` 預設 True，新增的正向資金流入路徑會自動落在受管制的
         安全側；要豁免必須主動寫出來，在 diff 上看得見。目前只有牌局結算與退款
-        豁免——它們賠的是玩家自己先投進去的注，不是新資金。
+        豁免。負向扣款不套用上限，只受「餘額不得低於 0」約束。
         """
         if not idempotency_key or len(idempotency_key) > 160:
             raise ValidationError(strings.ERR_IDEMPOTENCY_KEY)
@@ -94,8 +94,8 @@ class EconomyService:
         new_balance = wallet.balance + amount
         if new_balance < 0:
             raise InsufficientFundsError(strings.ERR_INSUFFICIENT_FUNDS)
-        # 收斂在這裡：簽到、轉帳、管理員調整都走這條路。
-        if enforce_balance_cap and new_balance > MAX_BALANCE:
+        # 上限只限制正向進帳。若牌局賠付已讓餘額高於上限，後續扣款仍必須能把它降回來。
+        if enforce_balance_cap and amount > 0 and new_balance > MAX_BALANCE:
             raise ValidationError(strings.ERR_BALANCE_LIMIT.format(limit=MAX_BALANCE))
         wallet.balance = new_balance
         transaction = Transaction(
