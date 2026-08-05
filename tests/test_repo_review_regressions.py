@@ -8,7 +8,7 @@ import pytest
 
 from src.config import Settings
 from src.database.engine import Database
-from src.database.models import Giveaway, Poll
+from src.database.models import Giveaway, GuildSettings, Poll
 from src.services.common import ValidationError
 from src.services.economy import MAX_BALANCE
 from src.services.giveaway import GiveawayService
@@ -83,6 +83,25 @@ async def test_blackjack_setting_range_must_contain_an_even_bet(db):
         values={"blackjack_min_bet": 11, "blackjack_max_bet": 12},
     )
     assert settings.blackjack_max_bet == 12
+
+
+async def test_legacy_odd_bet_range_does_not_lock_unrelated_settings(db):
+    """偶數區間規則是後加的，不得讓先前合法存下的設定鎖死整個設定面板。"""
+    service = SettingsService(db)
+    # 繞過現行驗證，模擬規則加入前就已存在的奇數獨點區間。
+    async with db.session_factory() as session:
+        settings = GuildSettings(guild_id=1, blackjack_min_bet=11, blackjack_max_bet=11)
+        session.add(settings)
+        await session.commit()
+
+    updated = await service.update(
+        1, 99, action="settings_economy", values={"currency_name": "天鵝幣"}
+    )
+
+    assert updated.currency_name == "天鵝幣"
+    # 但真的要動下注欄位時，規則仍然生效。
+    with pytest.raises(ValidationError):
+        await service.update(1, 99, action="settings_economy", values={"blackjack_max_bet": 11})
 
 
 @pytest.mark.parametrize(

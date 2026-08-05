@@ -102,15 +102,19 @@ class SettingsService:
                 settings = GuildSettings(guild_id=guild_id)
                 session.add(settings)
                 await session.flush()
-            minimum = int(values.get("blackjack_min_bet", settings.blackjack_min_bet))
-            maximum = int(values.get("blackjack_max_bet", settings.blackjack_max_bet))
-            if minimum <= 0 or maximum < minimum:
-                raise ValidationError(strings.ERR_BET_LIMITS)
-            # BlackjackService 只接受偶數下注。設定區間若完全沒有偶數，管理員雖然能
-            # 成功儲存設定，玩家卻沒有任何合法下注金額，因此在寫入前就拒絕。
-            first_even = minimum if minimum % 2 == 0 else minimum + 1
-            if first_even > maximum:
-                raise ValidationError(strings.BLACKJACK_EVEN_BET)
+            # 只在真的異動下注欄位時才做跨欄位驗證。偶數區間這條規則是後來才加的，
+            # 若對每次更新都重驗既有值，先前合法存下奇數獨點區間（例如 11–11）的
+            # guild 會連改幣別名稱都被擋住，等於整個設定面板被鎖死。
+            if {"blackjack_min_bet", "blackjack_max_bet"} & values.keys():
+                minimum = int(values.get("blackjack_min_bet", settings.blackjack_min_bet))
+                maximum = int(values.get("blackjack_max_bet", settings.blackjack_max_bet))
+                if minimum <= 0 or maximum < minimum:
+                    raise ValidationError(strings.ERR_BET_LIMITS)
+                # BlackjackService 只接受偶數下注。設定區間若完全沒有偶數，管理員雖然
+                # 能成功儲存設定，玩家卻沒有任何合法下注金額，因此在寫入前就拒絕。
+                first_even = minimum if minimum % 2 == 0 else minimum + 1
+                if first_even > maximum:
+                    raise ValidationError(strings.BLACKJACK_EVEN_BET)
             before = {key: getattr(settings, key) for key in values}
             for key, value in values.items():
                 setattr(settings, key, value)
