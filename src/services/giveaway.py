@@ -18,6 +18,9 @@ from src.services.economy import EconomyService
 MAX_REROLLS = 3
 # 冷卻擋的是管理員連點造成的重複公告，時間足夠確認上一輪結果即可。
 REROLL_COOLDOWN = timedelta(minutes=10)
+# 發布失敗留下的 pending 不參與正常活動；保留一天供除錯，之後標成 cancelled，
+# 避免永久累積成垃圾資料。
+STALE_PENDING_AGE = timedelta(hours=24)
 
 
 def weighted_sample_without_replacement(
@@ -92,8 +95,7 @@ class GiveawayService:
                 ticket_price=ticket_price,
                 per_user_limit=per_user_limit,
                 # 先落在 pending，publish() 成功才轉 active。Discord 發訊息失敗時
-                # 這筆就停在 pending，而 active()/due()/enter() 都只看 active，
-                # 因此不需要任何補償動作也不會被當成正常活動。
+                # 這筆就停在 pending，而 active()/due()/enter() 都只看 active。
                 status="pending",
             )
             session.add(giveaway)
@@ -122,6 +124,24 @@ class GiveawayService:
                 giveaway.status = "active"
 
         await self.db.run_transaction(operation)
+
+    async def cancel_stale_pending(self, now: datetime | None = None) -> int:
+        """把超過保留期仍未 publish 的抽獎標記取消，避免 pending 永久累積。"""
+        cutoff = aware_utc(now or datetime.now(UTC)) - STALE_PENDING_AGE
+
+        async def operation(session: AsyncSession) -> int:
+            pending = list(
+                await session.scalars(
+                    select(Giveaway).where(
+                        Giveaway.status == "pending", Giveaway.created_at <= cutoff
+                    )
+                )
+            )
+            for giveaway in pending:
+                giveaway.status = "cancelled"
+            return len(pending)
+
+        return await self.db.run_transaction(operation)
 
     async def enter(
         self,
