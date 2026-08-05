@@ -28,9 +28,12 @@ class GiveawayCog(commands.Cog):
 
     @tasks.loop(seconds=30)
     async def finish_due(self) -> None:
-        # due() 本身也可能失敗；若例外逃出 tasks.loop，整個背景結算工作可能停止，
+        # 掃描本身也可能失敗；若例外逃出 tasks.loop，整個背景結算工作可能停止，
         # 但 gateway heartbeat 仍會繼續，healthcheck 看不出抽獎已不再結算。
         try:
+            cancelled = await self.bot.giveaways.cancel_stale_pending()
+            if cancelled:
+                log.info("已取消 %s 筆過期 pending 抽獎", cancelled)
             pending_items = await self.bot.giveaways.due()
         except Exception:
             log.exception("抽獎到期掃描失敗")
