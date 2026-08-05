@@ -13,6 +13,7 @@ from src.services.common import ConflictError, NotFoundError, ValidationError, a
 
 MIN_DURATION = timedelta(hours=1)
 MAX_DURATION = timedelta(days=32)
+STALE_PENDING_AGE = timedelta(hours=24)
 
 
 def validate_poll(
@@ -72,8 +73,7 @@ class PollService:
                 multiple=multiple,
                 ends_at=current + duration,
                 # 先落在 pending，publish() 成功才轉 active。Discord 發訊息失敗時
-                # 這筆就停在 pending，而 active()/due() 都只看 active，因此不需要
-                # 任何補償動作也不會被背景結算當成正常投票。
+                # 這筆就停在 pending，而 active()/due() 都只看 active。
                 status="pending",
             )
             session.add(poll)
@@ -94,6 +94,22 @@ class PollService:
                 poll.status = "active"
 
         await self.db.run_transaction(operation)
+
+    async def cancel_stale_pending(self, now: datetime | None = None) -> int:
+        """把超過保留期仍未 publish 的投票標記取消，避免 pending 永久累積。"""
+        cutoff = aware_utc(now or datetime.now(UTC)) - STALE_PENDING_AGE
+
+        async def operation(session: AsyncSession) -> int:
+            pending = list(
+                await session.scalars(
+                    select(Poll).where(Poll.status == "pending", Poll.created_at <= cutoff)
+                )
+            )
+            for poll in pending:
+                poll.status = "cancelled"
+            return len(pending)
+
+        return await self.db.run_transaction(operation)
 
     async def active(self, guild_id: int) -> list[Poll]:
         async with self.db.session_factory() as session:
